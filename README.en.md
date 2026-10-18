@@ -40,7 +40,7 @@ Claude Dispatch gives you:
 
 ### Download (recommended)
 
-1. Download `ClaudeDispatch-1.0.0.zip` from [Releases](https://github.com/ink/claude-dispatch/releases/latest).
+1. Download `ClaudeDispatch-1.0.0.zip` from [Releases](https://github.com/ink110/claude-dispatch/releases/latest).
 2. Unzip and drag `ClaudeDispatch.app` into Applications.
 3. **Right-click → Open the first time.** The app is not notarized by Apple, so a double-click is blocked by Gatekeeper.
 
@@ -63,7 +63,7 @@ shasum -a 256 -c ClaudeDispatch-1.0.0.zip.sha256
 Requires Xcode Command Line Tools (`swiftc`). No Homebrew, jq, or third-party dependencies.
 
 ```bash
-git clone https://github.com/ink/claude-dispatch.git
+git clone https://github.com/ink110/claude-dispatch.git
 cd claude-dispatch
 ./scripts/install.sh
 ```

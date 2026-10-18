@@ -40,7 +40,7 @@ Claude Dispatch 的做法：
 
 ### 下载安装（推荐）
 
-1. 到 [Releases](https://github.com/ink/claude-dispatch/releases/latest) 下载 `ClaudeDispatch-1.0.0.zip`。
+1. 到 [Releases](https://github.com/ink110/claude-dispatch/releases/latest) 下载 `ClaudeDispatch-1.0.0.zip`。
 2. 解压，把 `ClaudeDispatch.app` 拖进「应用程序」。
 3. **首次打开必须右键 →「打开」**。应用没有 Apple 开发者签名，双击会被 Gatekeeper 拦下。
 
@@ -63,7 +63,7 @@ shasum -a 256 -c ClaudeDispatch-1.0.0.zip.sha256
 要求 Xcode Command Line Tools（`swiftc`），不需要 Homebrew、jq 或第三方依赖。
 
 ```bash
-git clone https://github.com/ink/claude-dispatch.git
+git clone https://github.com/ink110/claude-dispatch.git
 cd claude-dispatch
 ./scripts/install.sh
 ```
