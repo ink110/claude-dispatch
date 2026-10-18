@@ -119,6 +119,9 @@ Claude Code 在会话启动时读取 hooks。安装或修复后，新启动的�
 **改完 cc-switch 的 provider 后不弹了？**
 cc-switch 可能重写 `~/.claude/settings.json`，把 hooks 清掉。脉搏条会显示「点击修复」，点一下即可；也可以重新执行 `./scripts/install.sh`（幂等）。
 
+**点了交互式任务只切到 Terminal，没选中对应标签页？**
+精确选中标签页需要「控制终端」的自动化权限：系统设置 → 隐私与安全性 → 自动化 → 允许 Claude Pulse 控制「终端」。未授权时只会把终端切到前台；后台任务的 `claude attach` 不受影响。
+
 **端口被占用？**
 默认端口 18765。关闭另一个 Claude Pulse 实例后再启动。
 

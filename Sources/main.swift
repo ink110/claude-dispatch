@@ -50,7 +50,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--open-session"),
         isBackground: false,
         pid: pid
     )
-    RunLoop.main.run(until: Date().addingTimeInterval(3))
+    RunLoop.main.run(until: Date().addingTimeInterval(20))
     exit(0)
 }
 

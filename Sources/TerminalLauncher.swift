@@ -11,6 +11,8 @@ enum TerminalLauncher {
     private static let queue = DispatchQueue(label: "com.claudepulse.terminal", qos: .userInitiated)
     private static let permissionQueue = DispatchQueue(label: "com.claudepulse.terminal.permission")
     private static var permissionAsked = false
+    private static let stateLock = NSLock()
+    private static var automationAllowed = false
 
     static func openTask(
         attachId: String?,
@@ -129,30 +131,43 @@ enum TerminalLauncher {
 
     /// 只做权限已授予时的精确聚焦；未授权时静默跳过，避免弹窗卡住后台队列。
     private static func focusTerminalTab(forPID pid: Int32) {
+        debugLog("terminal: focusing pid \(pid)")
         guard let tty = ttyForPID(pid) else {
             debugLog("terminal: no tty for pid \(pid)")
             return
         }
+        debugLog("terminal: tty for pid \(pid) = \(tty)")
 
-        let permission = automationPermission(ask: false)
-        if permission == errAEEventWouldRequireUserConsent || permission == OSStatus(-1744) {
-            // 第一次点击交互式任务时向系统申请「控制 Terminal」权限；
-            // 放在独立队列里，用户不响应也不会挡住其他任务打开。
-            if !permissionAsked {
+        if isAutomationAllowed() {
+            focusTab(tty: tty)
+            return
+        }
+
+        // 权限检查和系统弹窗可能长时间不返回，放在独立队列，绝不阻塞任务打开。
+        permissionQueue.async {
+            let permission = automationPermission(ask: false)
+            if permission == noErr {
+                setAutomationAllowed(true)
+                focusTab(tty: tty)
+                return
+            }
+            if permission == errAEEventWouldRequireUserConsent || permission == OSStatus(-1744) {
+                guard !permissionAsked else { return }
                 permissionAsked = true
                 debugLog("terminal: requesting automation permission")
-                permissionQueue.async {
-                    let result = automationPermission(ask: true)
-                    debugLog("terminal: automation permission result=\(result)")
+                let result = automationPermission(ask: true)
+                debugLog("terminal: automation permission result=\(result)")
+                if result == noErr {
+                    setAutomationAllowed(true)
+                    focusTab(tty: tty)
                 }
+                return
             }
-            debugLog("terminal: permission pending, terminal activated only")
-            return
+            debugLog("terminal: automation unavailable (\(permission)), terminal activated only")
         }
-        guard permission == noErr else {
-            debugLog("terminal: automation denied (\(permission)), terminal activated only")
-            return
-        }
+    }
+
+    private static func focusTab(tty: String) {
         let ttyLiteral = appleScriptLiteral(tty)
         let script = """
         with timeout of 5 seconds
@@ -200,6 +215,18 @@ enum TerminalLauncher {
 
     private static func processAlive(_ pid: Int32) -> Bool {
         kill(pid, 0) == 0
+    }
+
+    private static func isAutomationAllowed() -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return automationAllowed
+    }
+
+    private static func setAutomationAllowed(_ value: Bool) {
+        stateLock.lock()
+        automationAllowed = value
+        stateLock.unlock()
     }
 
     private static func automationPermission(ask: Bool) -> OSStatus {
