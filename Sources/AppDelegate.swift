@@ -70,12 +70,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 排障：在真实 App 进程里验证「点卡片 → 聚焦终端标签页」链路。
         if let raw = ProcessInfo.processInfo.environment["CLAUDE_PULSE_FOCUS_PID"],
            let pid = Int32(raw) {
+            let sessionId = ProcessInfo.processInfo.environment["CLAUDE_PULSE_FOCUS_SESSION"]
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 TerminalLauncher.openTask(
                     attachId: nil,
                     name: "Claude Pulse 测试",
                     isBackground: false,
-                    pid: pid
+                    pid: pid,
+                    sessionId: sessionId
                 )
             }
         }

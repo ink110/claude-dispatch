@@ -46,7 +46,9 @@ enum TerminalLauncher {
         // 交互式会话：还活着就切回它所在的终端窗口。
         if let pid, processAlive(pid) {
             DispatchQueue.main.async { activateTerminal() }
-            queue.async { focusTerminalTab(forPID: pid) }
+            queue.async {
+                focusTerminalTab(forPID: pid, sessionId: sessionId, name: name, cwd: cwd)
+            }
             return
         }
 
@@ -131,7 +133,12 @@ enum TerminalLauncher {
     /// 直接执行 AppleScript 精确聚焦对应标签页。
     /// 不用 AEDeterminePermissionToAutomateTarget 预检：首次授权或待授权时它会无限阻塞。
     /// 已授权时立即生效；未授权时由系统弹授权框或返回错误，且全程在后台队列，不卡 UI。
-    private static func focusTerminalTab(forPID pid: Int32) {
+    private static func focusTerminalTab(
+        forPID pid: Int32,
+        sessionId: String?,
+        name: String,
+        cwd: String
+    ) {
         debugLog("terminal: focusing pid \(pid)")
         guard let tty = ttyForPID(pid) else {
             debugLog("terminal: no tty for pid \(pid)")
@@ -139,11 +146,18 @@ enum TerminalLauncher {
         }
         debugLog("terminal: tty for pid \(pid) = \(tty)")
         permissionQueue.async {
-            focusTab(tty: tty)
+            let found = focusTab(tty: tty)
+            guard !found else { return }
+
+            // 会话跑在 Terminal 之外（如远程 tmux）：无法选中标签页，
+            // 改为新开终端恢复该会话，保证点卡片仍能进入对应对话。
+            guard let sessionId, !sessionId.isEmpty else { return }
+            debugLog("terminal: no tab for tty \(tty), resuming session")
+            openCommand("claude --resume \(sessionId)", title: name, cwd: cwd)
         }
     }
 
-    private static func focusTab(tty: String) {
+    private static func focusTab(tty: String) -> Bool {
         let ttyLiteral = appleScriptLiteral(tty)
         let script = """
         with timeout of 5 seconds
@@ -154,20 +168,23 @@ enum TerminalLauncher {
                         if tty of t is \(ttyLiteral) then
                             set selected tab of w to t
                             set index of w to 1
-                            return
+                            return "found"
                         end if
                     end repeat
                 end repeat
             end tell
+            return "missing"
         end timeout
         """
         var errorInfo: NSDictionary?
-        _ = NSAppleScript(source: script)?.executeAndReturnError(&errorInfo)
+        let result = NSAppleScript(source: script)?.executeAndReturnError(&errorInfo)
         if let errorInfo {
             debugLog("terminal: focus tab error: \(errorInfo)")
-        } else {
-            debugLog("terminal: focused tty \(tty)")
+            return false
         }
+        let found = result?.stringValue == "found"
+        debugLog(found ? "terminal: focused tty \(tty)" : "terminal: no tab for tty \(tty)")
+        return found
     }
 
     private static func ttyForPID(_ pid: Int32) -> String? {

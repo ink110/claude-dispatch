@@ -46,6 +46,10 @@ if let index = CommandLine.arguments.firstIndex(of: "--focus-pid"),
    CommandLine.arguments.indices.contains(index + 1) {
     setenv("CLAUDE_PULSE_FOCUS_PID", CommandLine.arguments[index + 1], 1)
 }
+if let index = CommandLine.arguments.firstIndex(of: "--focus-session"),
+   CommandLine.arguments.indices.contains(index + 1) {
+    setenv("CLAUDE_PULSE_FOCUS_SESSION", CommandLine.arguments[index + 1], 1)
+}
 
 if let index = CommandLine.arguments.firstIndex(of: "--open-session"),
    CommandLine.arguments.indices.contains(index + 1),

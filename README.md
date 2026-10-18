@@ -143,7 +143,7 @@ CLAUDE_PULSE_TIMEOUT=120 ~/Applications/ClaudePulse.app/Contents/MacOS/ClaudePul
 
 - **登录时启动**：首次从 `~/Applications` 启动会默认注册；之后可在状态面板底部用「登录时启动」开关控制。
 - **调试日志**：默认关闭。需要排障时用 `CLAUDE_PULSE_DEBUG=1` 启动 App，或 `open -a ClaudePulse --args --debug`；日志写入 `~/.claude-pulse/debug.log`，超过 1MB 自动清空。
-- **调试开关**：`--show-status` 启动即展开状态面板；`--request-automation` 主动调出「控制终端」授权框；`--focus-pid <pid>` 启动后立即尝试聚焦该进程所在的终端标签页（验证自动化链路）。
+- **调试开关**：`--show-status` 启动即展开状态面板；`--request-automation` 主动调出「控制终端」授权框；`--focus-pid <pid>`（可配合 `--focus-session <session-id>`）启动后立即尝试聚焦该进程所在的终端标签页（验证自动化链路）。
 
 ## 开发
 
