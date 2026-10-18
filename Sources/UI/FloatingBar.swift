@@ -5,7 +5,7 @@ import AppKit
 final class FloatingBarController {
     private let store: SessionStore
     private let center: RequestCenter
-    private let agents: AgentListStore
+    private let agents: TaskStore
     private let compactPanel: NSPanel
     private let barView = FloatingBarView()
 
@@ -23,7 +23,7 @@ final class FloatingBarController {
         return compactPanel.frame
     }
 
-    init(store: SessionStore, center: RequestCenter, agents: AgentListStore) {
+    init(store: SessionStore, center: RequestCenter, agents: TaskStore) {
         self.store = store
         self.center = center
         self.agents = agents
@@ -103,6 +103,15 @@ final class FloatingBarController {
         let completed = tasks.filter { $0.state == .completed }.count
         let idle = tasks.filter { $0.state == .idle }.count
 
+        // hooks 正常但 `claude agents` 连续失败时，用黄点提示「数据降级」。
+        let effectiveHealth: HookHealthLevel
+        switch health {
+        case .ok:
+            effectiveHealth = agents.isDegraded ? .degraded : .ok
+        default:
+            effectiveHealth = health
+        }
+
         barView.update(
             pending: pending,
             running: running,
@@ -110,10 +119,10 @@ final class FloatingBarController {
             completed: completed,
             idle: idle,
             total: tasks.count,
-            health: health
+            health: effectiveHealth
         )
 
-        if !tasks.isEmpty || health != .ok {
+        if !tasks.isEmpty || effectiveHealth != .ok {
             compactPanel.orderFrontRegardless()
         } else {
             compactPanel.orderOut(nil)

@@ -79,7 +79,7 @@ final class RequestCenter {
         // 兼容旧版安装：没有 mode 的 PreToolUse 也只记录活动。
         if hookName == "PreToolUse" {
             store?.recordPreTool(sessionId: sessionId, toolName: toolName, input: input)
-            store?.refresh()
+            store?.refreshDebounced()
             onChange?()
             respond(.empty)
             return
@@ -87,7 +87,7 @@ final class RequestCenter {
 
         if hookName == "PostToolUse" {
             store?.recordPostTool(sessionId: sessionId, toolName: toolName, input: input)
-            store?.refresh()
+            store?.refreshDebounced()
             onChange?()
             respond(.empty)
             return
@@ -95,12 +95,14 @@ final class RequestCenter {
 
         // 非阻塞事件：只更新状态，空 body 放行。
         // Stop 是「一轮回复结束」，不是任务完成——每个回合弹提示只会变成噪音。
+        var refreshImmediately = false
         if hookName == "Stop" {
             store?.recordTurnEnd(sessionId: sessionId)
         } else if hookName == "SessionStart" {
             store?.clearAttention(sessionId: sessionId)
         } else if hookName == "SessionEnd" {
             store?.recordSessionEnd(sessionId: sessionId)
+            refreshImmediately = true
         } else if hookName == "Notification" {
             let type = event["notification_type"] as? String ?? ""
             switch type {
@@ -111,11 +113,16 @@ final class RequestCenter {
                 // 后台任务真正完成的信号，只有它才弹「已完成」。
                 store?.recordSessionEnd(sessionId: sessionId)
                 notifyFinished(event)
+                refreshImmediately = true
             default:
                 break
             }
         }
-        store?.refresh()
+        if refreshImmediately {
+            store?.refresh()
+        } else {
+            store?.refreshDebounced()
+        }
         onChange?()
         respond(.empty)
     }

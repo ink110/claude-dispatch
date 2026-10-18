@@ -5,10 +5,10 @@ final class MenuBarController {
     private let popover = NSPopover()
     private let store: SessionStore
     private let center: RequestCenter
-    private let agents: AgentListStore
+    private let agents: TaskStore
     private let content: StatusViewController
 
-    init(store: SessionStore, center: RequestCenter, agents: AgentListStore) {
+    init(store: SessionStore, center: RequestCenter, agents: TaskStore) {
         self.store = store
         self.center = center
         self.agents = agents
@@ -32,6 +32,9 @@ final class MenuBarController {
 
     func refresh() {
         guard let button = statusItem.button else { return }
+        button.toolTip = agents.isDegraded
+            ? "Claude Pulse · 数据降级（正在用会话注册表兜底）"
+            : "Claude Pulse · 观测所有 Claude Code 会话"
         let tasks = TaskBuilder.tasks(
             agentItems: agents.items,
             store: store,
@@ -83,11 +86,11 @@ final class MenuBarController {
 final class StatusViewController: NSViewController {
     private let store: SessionStore
     private let center: RequestCenter
-    private let agents: AgentListStore
+    private let agents: TaskStore
     private let stack = NSStackView()
     private let scroll = NSScrollView()
 
-    init(store: SessionStore, center: RequestCenter, agents: AgentListStore) {
+    init(store: SessionStore, center: RequestCenter, agents: TaskStore) {
         self.store = store
         self.center = center
         self.agents = agents

@@ -1,6 +1,6 @@
 import AppKit
 
-/// `claude agents --json --all` 的单条记录。字段和 agents 列表一致。
+/// `claude agents --json` 的单条记录。字段和 agents 列表一致。
 struct AgentListItem: Decodable {
     let pid: Int?
     let id: String?
@@ -70,10 +70,13 @@ struct TaskItem {
     let pending: Bool
 }
 
-/// 轮询 `claude agents --json --all`，作为悬停列表的状态源。
-/// 这样列表里的分组、状态、短 id 都和 `claude agents` 一致。
-final class AgentListStore {
+/// 轮询 `claude agents --json`，作为悬停列表的主数据源。
+/// 连续两次失败后清空列表并标记降级，由 TaskBuilder 回落到会话注册表。
+final class TaskStore {
     private(set) var items: [AgentListItem] = []
+    /// `claude agents` 连续失败、当前依赖注册表兜底时为 true。
+    private(set) var isDegraded = false
+    private var consecutiveFailures = 0
     private var timer: Timer?
     private var running = false
     private var claudePath: String?
@@ -82,7 +85,7 @@ final class AgentListStore {
     func start() {
         claudePath = Self.resolveClaudePath()
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.refresh()
         }
         if let timer { RunLoop.main.add(timer, forMode: .common) }
@@ -101,7 +104,18 @@ final class AgentListStore {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.running = false
-                guard let items else { return }
+                guard let items else {
+                    self.consecutiveFailures += 1
+                    // 一次瞬时失败很常见，连续两次才降级，避免列表闪空。
+                    if self.consecutiveFailures >= 2 {
+                        self.isDegraded = true
+                        self.items = []
+                        self.onChange?()
+                    }
+                    return
+                }
+                self.consecutiveFailures = 0
+                self.isDegraded = false
                 self.items = items
                 self.onChange?()
             }
@@ -111,7 +125,7 @@ final class AgentListStore {
     private static func fetch(path: String) -> [AgentListItem]? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = ["agents", "--json", "--all"]
+        process.arguments = ["agents", "--json"]
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
 
         let pipe = Pipe()
@@ -121,6 +135,7 @@ final class AgentListStore {
         do {
             try process.run()
             process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             return try JSONDecoder().decode([AgentListItem].self, from: data)
         } catch {
@@ -170,31 +185,26 @@ enum TaskBuilder {
         var seen = Set<String>()
 
         for item in agentItems {
+            // supervisor 已停掉进程的僵尸记录：既没有 pid 也没有 status，直接隐藏。
+            guard !(item.pid == nil && item.status == nil) else { continue }
             seen.insert(item.sessionId)
             let live = liveBySession[item.sessionId]
             let activity = store.activity(for: item.sessionId)
             let last = activity?.lastEventAt ?? live?.lastActivity ?? item.startedDate
             let pending = pendingIds.contains(item.sessionId)
             let stale = live.map { store.isStale($0) } ?? false
-            // `--all` 会把已经退出的会话也列出来，它们的 state 可能停在 blocked。
-            // 只有真正带 waitingFor、status=waiting 或有实时请求的才算「等你处理」。
-            let waiting = pending || item.waitingFor != nil || item.status == "waiting"
-            let dead = item.pid == nil && item.status == nil
+            // 只有真正带 waitingFor 或有实时请求的才算「等你处理」；
+            // status == "waiting" 单独出现不足以证明在等用户，避免误报。
+            let waiting = pending || item.waitingFor != nil
 
             let state: TaskState
             if waiting {
                 state = .needsInput
-            } else if dead {
-                state = .completed
             } else if stale {
                 state = .stale
             } else if item.status == "busy" || live?.isBusy == true {
                 state = .running
-            } else if item.state == "done" {
-                state = .completed
-            } else if item.kind == "interactive" {
-                state = .idle
-            } else if item.status == "idle" {
+            } else if item.state == "done" || item.state == "failed" {
                 state = .completed
             } else {
                 state = .idle
@@ -209,7 +219,7 @@ enum TaskBuilder {
             case .running:
                 activityText = activity?.currentSummary ?? "正在运行"
             case .completed:
-                activityText = "已完成"
+                activityText = item.state == "failed" ? "执行失败" : "已完成"
             case .idle:
                 activityText = activity?.lastEventSummary ?? "空闲"
             }
@@ -257,6 +267,23 @@ enum TaskBuilder {
                 lastActivity: activity?.lastEventAt ?? session.lastActivity,
                 activityText: activity?.currentSummary ?? activity?.lastEventSummary,
                 pending: pending
+            ))
+        }
+
+        // 任务结束后会从 `claude agents` 列表消失；用内存里的完成列表保留 10 分钟。
+        for done in store.recentlyCompleted where !seen.contains(done.sessionId) {
+            seen.insert(done.sessionId)
+            tasks.append(TaskItem(
+                sessionId: done.sessionId,
+                attachId: done.attachId,
+                name: done.name,
+                cwd: done.cwd,
+                isBackground: done.isBackground,
+                state: .completed,
+                startedAt: nil,
+                lastActivity: done.completedAt,
+                activityText: "已完成",
+                pending: false
             ))
         }
 

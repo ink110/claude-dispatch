@@ -5,9 +5,13 @@ import Darwin
 /// 注册表由 Claude Code 自己维护，比解析 transcript 更准也更便宜。
 final class SessionStore {
     private(set) var sessions: [SessionRecord] = []
+    /// 最近 10 分钟结束的会话，`claude agents` 列表不再包含它们。
+    private(set) var recentlyCompleted: [CompletedSession] = []
     private var activities: [String: SessionActivity] = [:]
     private var timer: Timer?
+    private var pendingRefresh: DispatchWorkItem?
     private var lastSignature = ""
+    private static let completedRetention: TimeInterval = 600
     var onChange: (() -> Void)?
 
     func start() {
@@ -107,9 +111,41 @@ final class SessionStore {
         activity.lastEventAt = Date()
         activity.lastEventSummary = "任务完成"
         activities[sessionId] = activity
+        recordCompleted(sessionId: sessionId)
+    }
+
+    private func recordCompleted(sessionId: String) {
+        let live = sessions.first { $0.sessionId == sessionId }
+        let entry = CompletedSession(
+            sessionId: sessionId,
+            attachId: live?.jobId,
+            name: live?.displayName ?? String(sessionId.prefix(8)),
+            cwd: live?.cwd ?? "",
+            isBackground: live?.isBackground ?? true,
+            completedAt: Date()
+        )
+        recentlyCompleted.removeAll { $0.sessionId == sessionId }
+        recentlyCompleted.insert(entry, at: 0)
+        pruneCompleted()
+    }
+
+    @discardableResult
+    private func pruneCompleted(now: Date = Date()) -> Bool {
+        let before = recentlyCompleted.count
+        recentlyCompleted.removeAll { now.timeIntervalSince($0.completedAt) > Self.completedRetention }
+        return recentlyCompleted.count != before
+    }
+
+    /// 活动流高频触发时合并刷新，避免每次都扫目录拖慢 hook 响应。
+    func refreshDebounced() {
+        pendingRefresh?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.refresh() }
+        pendingRefresh = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     func refresh() {
+        if pruneCompleted() { onChange?() }
         let dir = AppConfig.home.appendingPathComponent(".claude/sessions")
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {

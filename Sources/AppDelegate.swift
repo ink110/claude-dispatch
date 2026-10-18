@@ -2,7 +2,7 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
-    private let agents = AgentListStore()
+    private let agents = TaskStore()
     private let center = RequestCenter()
     private var server: HookServer?
     private var menuBar: MenuBarController?

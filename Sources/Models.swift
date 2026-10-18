@@ -61,6 +61,16 @@ struct SessionActivity {
     var attentionLabel: String?
 }
 
+/// 最近结束的会话：`claude agents` 不再列出，但用户仍需要看到「刚完成」。
+struct CompletedSession {
+    let sessionId: String
+    let attachId: String?
+    let name: String
+    let cwd: String
+    let isBackground: Bool
+    let completedAt: Date
+}
+
 /// 一次等待用户处理的请求（权限 / 提问 / 计划）
 struct PendingRequest {
     let id: String
