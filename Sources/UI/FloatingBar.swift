@@ -11,6 +11,8 @@ final class FloatingBarController {
 
     private var expandedPanel: NSPanel?
     private var statusController: StatusViewController?
+    private var compactShadow: WindowShadow?
+    private var expandedShadow: WindowShadow?
     private var hideWork: DispatchWorkItem?
     private var hoverTimer: Timer?
     private var healthTimer: Timer?
@@ -30,14 +32,15 @@ final class FloatingBarController {
         self.agents = agents
 
         let panel = DispatchPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 250, height: 40),
+            contentRect: NSRect(x: 0, y: 0, width: 250, height: 34),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // 透明无边框窗口的系统阴影会沿矩形窗口边缘画出一圈深色线，看起来像黑色描边。
+        panel.hasShadow = false
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
@@ -47,6 +50,7 @@ final class FloatingBarController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         panel.contentView = barView
         compactPanel = panel
+        compactShadow = WindowShadow(target: panel, cornerRadius: 17)
 
         barView.onClick = { [weak self] in
             guard let self else { return }
@@ -73,6 +77,7 @@ final class FloatingBarController {
         if value {
             hideExpanded()
             compactPanel.orderOut(nil)
+            compactShadow?.hide()
         } else {
             refresh()
         }
@@ -81,6 +86,7 @@ final class FloatingBarController {
     func start() {
         restorePosition()
         compactPanel.orderFrontRegardless()
+        compactShadow?.show()
         dispatchLog("bar start frame=\(compactPanel.frame) ignoresMouse=\(compactPanel.ignoresMouseEvents) canKey=\(compactPanel.canBecomeKey)")
 
         NotificationCenter.default.addObserver(
@@ -97,6 +103,13 @@ final class FloatingBarController {
         if let healthTimer { RunLoop.main.add(healthTimer, forMode: .common) }
 
         refresh()
+
+        // 截图/排障用：启动时直接展开悬浮状态面板。
+        if ProcessInfo.processInfo.environment["CLAUDE_DISPATCH_SHOW_FLOATING_STATUS"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.showExpanded(pin: true)
+            }
+        }
     }
 
     deinit {
@@ -138,9 +151,13 @@ final class FloatingBarController {
         )
 
         if !tasks.isEmpty || effectiveHealth != .ok {
-            if !suppressed { compactPanel.orderFrontRegardless() }
+            if !suppressed {
+                compactPanel.orderFrontRegardless()
+                compactShadow?.show()
+            }
         } else {
             compactPanel.orderOut(nil)
+            compactShadow?.hide()
             hideExpanded()
         }
 
@@ -232,7 +249,9 @@ final class FloatingBarController {
             )
             panel.isOpaque = false
             panel.backgroundColor = .clear
-            panel.hasShadow = true
+            // 系统窗口阴影会在透明窗口边缘画出一圈方形深色轮廓，和圆角材质叠在一起很脏。
+            // 关闭系统阴影，圆角由 RoundedEffectView 的 mask 单独负责。
+            panel.hasShadow = false
             panel.level = .statusBar
             panel.hidesOnDeactivate = false
             panel.isReleasedWhenClosed = false
@@ -241,20 +260,25 @@ final class FloatingBarController {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
             panel.contentViewController = controller
             expandedPanel = panel
+            expandedShadow = WindowShadow(target: panel, cornerRadius: Theme.panelRadius)
             statusController = controller
         }
 
         statusController?.refresh()
         positionExpanded()
         expandedPanel?.orderFrontRegardless()
+        expandedShadow?.show()
+        Theme.fadeIn(expandedPanel)
         startHoverWatch()
     }
 
     private func hideExpanded() {
+        dispatchLog("hideExpanded")
         pinned = false
         hoverTimer?.invalidate()
         hoverTimer = nil
         expandedPanel?.orderOut(nil)
+        expandedShadow?.hide()
     }
 
     private func positionExpanded() {
@@ -326,11 +350,11 @@ final class FloatingBarController {
 
 // MARK: - 状态条视图
 
-private final class FloatingBarView: NSVisualEffectView {
+private final class FloatingBarView: RoundedEffectView {
     var onClick: (() -> Void)?
     var onHover: ((Bool) -> Void)?
 
-    private let icon = StatusIconView(size: 14)
+    private let icon = StatusIconView(size: 16)
     private let label = NSTextField(labelWithString: "")
     /// 活动流 hooks 缺失时显示的黄点（降级提示），不占用状态文案。
     private let degradedDot = Theme.dot(color: .systemOrange, size: 6)
@@ -344,13 +368,13 @@ private final class FloatingBarView: NSVisualEffectView {
         material = .popover
         blendingMode = .behindWindow
         state = .active
+        // 标准胶囊形，与菜单栏里的系统状态项保持同样的克制感。
+        cornerRadius = 17
         wantsLayer = true
-        layer?.cornerRadius = 20
+        layer?.cornerRadius = 17
         layer?.masksToBounds = true
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
 
-        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.font = .systemFont(ofSize: 12.5, weight: .medium)
         label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
@@ -362,8 +386,8 @@ private final class FloatingBarView: NSVisualEffectView {
         let stack = NSStackView(views: [icon, label, degradedDot])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 14, bottom: 0, right: 12)
+        stack.spacing = 7
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         degradedDot.isHidden = true
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)

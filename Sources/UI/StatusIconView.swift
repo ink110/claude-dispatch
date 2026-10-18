@@ -31,6 +31,7 @@ final class StatusIconView: NSView {
 
     func configure(state: TaskState) {
         guard state != currentState else { return }
+        let hadState = currentState != nil
         currentState = state
 
         let symbol: String
@@ -64,13 +65,22 @@ final class StatusIconView: NSView {
 
         imageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: state.label)
         imageView.contentTintColor = color
-        imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .semibold)
+        imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .medium)
         imageView.wantsLayer = true
         layoutSubtreeIfNeeded()
         centerLayerAnchor()
         imageView.layer?.removeAllAnimations()
 
-        if spins {
+        // 状态切换时短促淡入淡出，替代生硬的图标跳变。
+        if hadState, Theme.animationsEnabled {
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.15
+            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            imageView.layer?.add(fade, forKey: "stateFade")
+        }
+
+        if spins, Theme.animationsEnabled {
             let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
             rotation.fromValue = 0
             rotation.toValue = CGFloat.pi * 2
@@ -81,7 +91,7 @@ final class StatusIconView: NSView {
             imageView.layer?.add(rotation, forKey: "statusSpin")
         }
 
-        if pulses {
+        if pulses, Theme.animationsEnabled {
             let pulse = CABasicAnimation(keyPath: "opacity")
             pulse.fromValue = 1.0
             pulse.toValue = 0.35

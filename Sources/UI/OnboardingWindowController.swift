@@ -158,10 +158,8 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private func makeStatusBox() -> NSView {
         let box = NSView()
         box.wantsLayer = true
-        box.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        box.layer?.backgroundColor = Theme.fill.cgColor
         box.layer?.cornerRadius = 8
-        box.layer?.borderWidth = 1
-        box.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor
         box.translatesAutoresizingMaskIntoConstraints = false
         box.widthAnchor.constraint(equalToConstant: 464).isActive = true
 

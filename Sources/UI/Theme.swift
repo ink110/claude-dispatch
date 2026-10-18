@@ -1,6 +1,75 @@
 import AppKit
 
+/// Apple HIG 对齐的设计令牌：语义色、统一圆角、最小可读字号、克制的动效。
 enum Theme {
+    // MARK: - 设计令牌
+
+    static let panelRadius: CGFloat = 14
+    static let controlRadius: CGFloat = 7
+
+    /// 半透明材质上的「填充层」：用语义色的低透明度代替白底卡片。
+    static var fill: NSColor { .labelColor.withAlphaComponent(0.05) }
+    static var fillStrong: NSColor { .labelColor.withAlphaComponent(0.08) }
+    static var hoverFill: NSColor { .labelColor.withAlphaComponent(0.07) }
+    /// 发丝分割线：比 separatorColor 更轻，不会在浅色界面上显得发黑。
+    static var hairline: NSColor { .labelColor.withAlphaComponent(0.09) }
+
+    /// 系统「减弱动态效果」开启时，所有装饰性动画都要让路。
+    static var animationsEnabled: Bool {
+        !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    /// 面板出现：淡入，不做位移动画，避免频繁交互时分散注意力。
+    static func fadeIn(_ window: NSWindow?) {
+        guard let window else { return }
+        guard animationsEnabled else {
+            window.alphaValue = 1
+            return
+        }
+        window.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().alphaValue = 1
+        }
+        // 同一轮 runloop 里的窗口排序（例如阴影窗口）可能打断动画，
+        // 兜底确保面板最终一定可见。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak window] in
+            window?.alphaValue = 1
+        }
+    }
+
+    static func hairlineView(width: CGFloat? = nil) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = hairline.cgColor
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        if let width {
+            view.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        return view
+    }
+
+    static func symbol(
+        _ name: String,
+        size: CGFloat,
+        weight: NSFont.Weight = .medium,
+        color: NSColor
+    ) -> NSImageView {
+        let view = NSImageView()
+        view.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+        view.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: size, weight: weight)
+        view.contentTintColor = color
+        view.imageScaling = .scaleProportionallyUpOrDown
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.widthAnchor.constraint(equalToConstant: size + 2).isActive = true
+        view.heightAnchor.constraint(equalToConstant: size + 2).isActive = true
+        return view
+    }
+
+    // MARK: - 文本
+
     static func label(
         _ text: String,
         size: CGFloat,

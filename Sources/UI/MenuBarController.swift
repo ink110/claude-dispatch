@@ -26,9 +26,10 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         popover.contentViewController = content
 
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Claude Dispatch")
-            button.image?.isTemplate = true
+            // 菜单栏高度 24pt，图标用 15pt 中等字重，视觉重量与系统状态项一致。
+            button.image = Self.menuBarSymbol("waveform.path.ecg")
             button.imagePosition = .imageLeading
+            button.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
             button.target = self
             button.action = #selector(togglePopover)
             button.toolTip = "Claude Dispatch · 观测所有 Claude Code 会话"
@@ -52,22 +53,25 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         let busy = tasks.filter { $0.state == .running }.count
 
         if pending > 0 {
-            button.image = NSImage(systemSymbolName: "bell.badge.fill", accessibilityDescription: "有任务等你处理")
-            button.image?.isTemplate = false
+            // 只有「等你处理」用红色；其余状态保持模板图标 + 数字，符合菜单栏的克制用色。
+            button.image = Self.menuBarSymbol("bell.badge.fill")
             button.contentTintColor = .systemRed
             button.title = " \(pending)"
         } else {
-            button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Claude Dispatch")
-            button.image?.isTemplate = true
-            if busy > 0 {
-                button.contentTintColor = .systemOrange
-                button.title = " \(busy)"
-            } else {
-                button.contentTintColor = nil
-                button.title = ""
-            }
+            button.image = Self.menuBarSymbol("waveform.path.ecg")
+            button.contentTintColor = nil
+            button.title = busy > 0 ? " \(busy)" : ""
         }
         if popover.isShown { content.refresh() }
+    }
+
+    /// 统一菜单栏 SF Symbol 的尺寸与模板属性，系统会随菜单栏外观自动着色。
+    private static func menuBarSymbol(_ name: String) -> NSImage? {
+        let configuration = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Claude Dispatch")?
+            .withSymbolConfiguration(configuration)
+        image?.isTemplate = true
+        return image
     }
 
     func showPopover() {
@@ -122,15 +126,14 @@ final class StatusViewController: NSViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
-        let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 392, height: 420))
+        let effect = RoundedEffectView(frame: NSRect(x: 0, y: 0, width: 392, height: 420))
         effect.material = .popover
         effect.blendingMode = .behindWindow
         effect.state = .active
+        effect.cornerRadius = Theme.panelRadius
         effect.wantsLayer = true
-        effect.layer?.cornerRadius = 14
+        effect.layer?.cornerRadius = Theme.panelRadius
         effect.layer?.masksToBounds = true
-        effect.layer?.borderWidth = 1
-        effect.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor
         view = effect
     }
 
@@ -258,7 +261,7 @@ final class StatusViewController: NSViewController {
         container.translatesAutoresizingMaskIntoConstraints = false
         container.widthAnchor.constraint(equalToConstant: 392).isActive = true
 
-        let title = Theme.label("Claude Dispatch", size: 14, weight: .semibold)
+        let title = Theme.label("Claude Dispatch", size: 13, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
 
         var parts: [String] = []
@@ -272,7 +275,7 @@ final class StatusViewController: NSViewController {
         let subtitleColor: NSColor = needs > 0
             ? .systemRed
             : (waiting > 0 ? .systemOrange : .secondaryLabelColor)
-        let subtitle = Theme.label(subtitleText, size: 10.5, color: subtitleColor)
+        let subtitle = Theme.label(subtitleText, size: 11, color: subtitleColor)
         subtitle.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(title)
@@ -294,7 +297,7 @@ final class StatusViewController: NSViewController {
 
         let hint = Theme.label(
             "点击任务打开对应终端会话",
-            size: 9.5,
+            size: 10,
             color: .tertiaryLabelColor
         )
         hint.translatesAutoresizingMaskIntoConstraints = false
@@ -314,7 +317,7 @@ final class StatusViewController: NSViewController {
         container.widthAnchor.constraint(equalToConstant: 392).isActive = true
         let label = Theme.label(
             "\(text) · \(count)",
-            size: 9.5,
+            size: 10,
             weight: .semibold,
             color: .tertiaryLabelColor
         )
@@ -399,7 +402,7 @@ final class StatusViewController: NSViewController {
     private func buildFooter() {
         let line = NSView()
         line.wantsLayer = true
-        line.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.55).cgColor
+        line.layer?.backgroundColor = Theme.hairline.cgColor
         line.translatesAutoresizingMaskIntoConstraints = false
         footerBar.addSubview(line)
 
@@ -509,22 +512,22 @@ private final class ClickableRow: NSView {
         widthAnchor.constraint(equalToConstant: 392).isActive = true
 
         card.wantsLayer = true
-        card.layer?.cornerRadius = 10
-        // 白底卡片，避免半透明材质下文字对比度不足。
+        // 不做白底卡片：悬停时用极轻的语义色填充，让磨砂材质透出来。
+        card.layer?.cornerRadius = 9
         card.layer?.backgroundColor = Self.cardBackground.cgColor
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
 
-        let icon = StatusIconView(size: 13)
+        let icon = StatusIconView(size: 18)
         icon.configure(state: state)
 
-        let titleLabel = Theme.label(title, size: 12, weight: .medium)
-        let detailLabel = Theme.label(detail, size: 10, color: .secondaryLabelColor)
-        let statusLabel = Theme.label(status, size: 10, weight: .medium, color: Self.statusColor(state))
+        let titleLabel = Theme.label(title, size: 12.5, weight: .medium)
+        let detailLabel = Theme.label(detail, size: 10.5, color: .secondaryLabelColor)
+        let statusLabel = Theme.label(status, size: 10.5, weight: .medium, color: Self.statusColor(state))
 
         var textViews: [NSView] = [titleLabel, detailLabel]
         if let activity, !activity.isEmpty {
-            let activityLabel = Theme.label(activity, size: 10, color: .secondaryLabelColor)
+            let activityLabel = Theme.label(activity, size: 10.5, color: .secondaryLabelColor)
             activityLabel.lineBreakMode = .byTruncatingTail
             textViews.append(activityLabel)
         }
@@ -593,12 +596,11 @@ private final class ClickableRow: NSView {
     }
 
     private static var cardBackground: NSColor {
-        .textBackgroundColor
+        .clear
     }
 
     private static var cardHoverBackground: NSColor {
-        NSColor.textBackgroundColor.blended(withFraction: 0.08, of: .controlAccentColor)
-            ?? .textBackgroundColor
+        Theme.hoverFill
     }
 
     override func mouseEntered(with event: NSEvent) {

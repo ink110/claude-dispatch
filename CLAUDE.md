@@ -81,6 +81,19 @@ claude-dispatch/
 - 每个文件职责单一，UI 与传输/状态逻辑分离。
 - 不为了跑通而注释报错；先找根因。
 
+## UI 规范（对齐 Apple HIG）
+
+- 所有颜色、圆角、字号、分割线从 `Sources/UI/Theme.swift` 取，不在各视图里散落硬编码。
+- 面板使用标准材质（`NSVisualEffectView` + `.popover`）。**不要在材质上叠白底卡片**：列表行默认透明，悬停/选中才用 `Theme.fill` / `Theme.hoverFill`。
+- **不要画黑色描边**：面板无边框；分割线统一用 `Theme.hairline`（`labelColor` 9%），不再用 `separatorColor` 直接画线。唯一的边框是红色升级提醒，且只短暂出现。
+- 透明无边框窗口一律 `hasShadow = false`：系统窗口阴影会沿矩形窗口边缘画出一圈深色线，看起来就是黑色描边。
+- 软阴影统一由 `WindowShadow` 的独立透明窗口承载（圆角 `shadowPath`，随主面板移动/缩放）。不要重新打开 `NSWindow.hasShadow`。
+- 材质圆角必须用 `RoundedEffectView` 的 `maskImage` 裁切；只设 `layer.cornerRadius` 会留下方形材质，形成「尖角上叠圆角」。
+- 图标统一用 SF Symbols（Apple 官方图标库），菜单栏用模板图标；状态图标 16–18pt、中等字重（展开面板 18pt）。
+- macOS 正文字号 13pt，辅助 11–12pt，最小 10pt；不再出现 9.5pt 以下文字。
+- 动效必须克制并尊重「减弱动态效果」：面板出现 0.16s 淡入，状态图标切换 0.15s 淡入淡出；旋转/脉冲在开启减弱动态时停用。
+- 状态语义不能只靠颜色：选项行同时用圆形指示器的形状和颜色表达选中态。
+
 ## 验证
 
 - 构建：`./scripts/build.sh`（应输出 `Architectures: x86_64 arm64`）
@@ -89,6 +102,7 @@ claude-dispatch/
 - 冒烟：`./scripts/smoke.sh`（需要 App 已启动；用 `/status` 断言入队、双请求、断连清理）
 - 长内容：`./scripts/demo-request.sh --questions 20`，截图确认正文滚动、底部按钮固定；`--permission --steps 5` 验证多行 footer。
 - 首次启动：`open -n build/ClaudeDispatch.app --args --show-onboarding`，截图确认引导窗口与 hook 状态。
+- 悬浮状态面板：`CLAUDE_DISPATCH_SHOW_FLOATING_STATUS=1 build/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch`，截图确认真圆角、无描边、状态图标 18pt。
 - 打包：`./scripts/package.sh`，检查 zip 只含 `.app`、无备份/token，并记录 SHA-256。
 - 卸载：`./scripts/uninstall.sh`（无 jq 依赖，走 `--uninstall-hooks`）
 - 提醒内容验收：权限卡默认不出现大段代码；中文摘要、影响说明、动作按钮齐全；「查看完整命令」能展开且不误触允许。

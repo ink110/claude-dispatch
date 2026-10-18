@@ -5,19 +5,22 @@ final class ToastPanelController {
     static let shared = ToastPanelController()
 
     private var panel: NSPanel?
+    private var shadow: WindowShadow?
     private var dismissWork: DispatchWorkItem?
 
     func show(title: String, body: String, accent: NSColor, autoDismiss: TimeInterval = 4.5) {
         dismissWork?.cancel()
+        shadow?.hide()
         panel?.close()
 
         let width: CGFloat = 360
-        let root = NSVisualEffectView()
+        let root = RoundedEffectView()
         root.material = .popover
         root.blendingMode = .behindWindow
         root.state = .active
+        root.cornerRadius = Theme.panelRadius
         root.wantsLayer = true
-        root.layer?.cornerRadius = 14
+        root.layer?.cornerRadius = Theme.panelRadius
         root.layer?.masksToBounds = true
 
         let stack = NSStackView()
@@ -32,7 +35,7 @@ final class ToastPanelController {
         header.orientation = .horizontal
         header.spacing = 8
         header.addArrangedSubview(Theme.dot(color: accent))
-        header.addArrangedSubview(Theme.label(title, size: 12.5, weight: .semibold))
+        header.addArrangedSubview(Theme.label(title, size: 13, weight: .semibold))
         stack.addArrangedSubview(header)
 
         let bodyLabel = Theme.multilineLabel(body, size: 11.5, color: .secondaryLabelColor)
@@ -52,10 +55,24 @@ final class ToastPanelController {
         panel.setContentSize(NSSize(width: width, height: max(64, size.height)))
         position(panel)
         panel.orderFrontRegardless()
+        shadow = WindowShadow(target: panel, cornerRadius: Theme.panelRadius)
+        shadow?.show()
+        Theme.fadeIn(panel)
         self.panel = panel
 
         let work = DispatchWorkItem { [weak self, weak panel] in
-            panel?.close()
+            guard let panel else { return }
+            self?.shadow?.hide()
+            if Theme.animationsEnabled, panel.isVisible {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.18
+                    panel.animator().alphaValue = 0
+                }, completionHandler: {
+                    panel.close()
+                })
+            } else {
+                panel.close()
+            }
             if self?.panel === panel { self?.panel = nil }
         }
         dismissWork = work
@@ -72,7 +89,7 @@ final class ToastPanelController {
         panel.contentView = root
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false

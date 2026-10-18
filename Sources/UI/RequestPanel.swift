@@ -21,6 +21,7 @@ final class RequestPanelController: NSWindowController {
     private var planFeedbackField: NSTextField?
     private var rawContainer: NSView?
     private var rawButton: NSButton?
+    private var shadow: WindowShadow?
     private var rootStack: NSStackView!
     private var bodyStack: NSStackView!
     private var bodyScroll: NSScrollView!
@@ -51,7 +52,8 @@ final class RequestPanelController: NSWindowController {
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // 系统窗口阴影会在圆角材质外留下一圈深色矩形轮廓；圆角与边界交给 mask 处理。
+        panel.hasShadow = false
         // 确认卡必须高于状态条展开面板，避免互相遮挡。
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         panel.hidesOnDeactivate = false
@@ -62,6 +64,7 @@ final class RequestPanelController: NSWindowController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
 
         super.init(window: panel)
+        shadow = WindowShadow(target: panel, cornerRadius: Theme.panelRadius)
         build()
     }
 
@@ -72,10 +75,18 @@ final class RequestPanelController: NSWindowController {
         guard let panel = window as? NSPanel else { return }
         relayout()
         panel.orderFrontRegardless()
+        shadow?.show()
+        Theme.fadeIn(panel)
     }
 
     func hide() {
         window?.orderOut(nil)
+        shadow?.hide()
+    }
+
+    override func close() {
+        shadow?.hide()
+        super.close()
     }
 
     func updateChips(_ chips: [RequestChip], activeId: String) {
@@ -136,17 +147,19 @@ final class RequestPanelController: NSWindowController {
     func escalateAlert() {
         guard let view = window?.contentView else { return }
         view.wantsLayer = true
-        view.layer?.cornerRadius = 16
-        view.layer?.borderWidth = 2
-        view.layer?.borderColor = NSColor.systemRed.cgColor
+        view.layer?.cornerRadius = Theme.panelRadius
+        view.layer?.borderWidth = 1.5
+        view.layer?.borderColor = NSColor.systemRed.withAlphaComponent(0.85).cgColor
 
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = 1.0
-        animation.toValue = 0.55
-        animation.duration = 0.35
-        animation.autoreverses = true
-        animation.repeatCount = 3
-        view.layer?.add(animation, forKey: "claudeDispatch")
+        if Theme.animationsEnabled {
+            let animation = CABasicAnimation(keyPath: "opacity")
+            animation.fromValue = 1.0
+            animation.toValue = 0.62
+            animation.duration = 0.35
+            animation.autoreverses = true
+            animation.repeatCount = 3
+            view.layer?.add(animation, forKey: "claudeDispatch")
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak view] in
             view?.layer?.borderWidth = 0
@@ -173,14 +186,15 @@ final class RequestPanelController: NSWindowController {
     private func build() {
         guard let panel = window else { return }
 
-        // 确认卡承担主要阅读内容，用实色背景保证正文对比度。
-        let root = NSView()
+        // 与系统 popover 一致：常规材质（regular material）承载文本，不再叠白底卡片。
+        let root = RoundedEffectView()
+        root.material = .popover
+        root.blendingMode = .behindWindow
+        root.state = .active
+        root.cornerRadius = Theme.panelRadius
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
-        root.layer?.cornerRadius = 16
+        root.layer?.cornerRadius = Theme.panelRadius
         root.layer?.masksToBounds = true
-        root.layer?.borderWidth = 1
-        root.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.5).cgColor
         panel.contentView = root
 
         let stack = NSStackView()
@@ -303,14 +317,11 @@ final class RequestPanelController: NSWindowController {
             }
         }()
 
-        let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        icon.contentTintColor = color
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+        let icon = Theme.symbol(symbol, size: 16, weight: .medium, color: color)
         row.addArrangedSubview(icon)
 
-        let titleLabel = Theme.label(request.human.title, size: 13.5, weight: .semibold)
-        titleLabel.textColor = color
+        // 标题用正文色，颜色只留给图标：避免整行变成警示色而显得刺眼。
+        let titleLabel = Theme.label(request.human.title, size: 13, weight: .semibold)
         row.addArrangedSubview(titleLabel)
         row.addArrangedSubview(Theme.spacer())
 
@@ -351,10 +362,10 @@ final class RequestPanelController: NSWindowController {
                 attributes: [.foregroundColor: color, .font: font]
             )
             button.wantsLayer = true
-            button.layer?.cornerRadius = 9
+            button.layer?.cornerRadius = 8
             button.layer?.backgroundColor = (isActive
-                ? NSColor.controlAccentColor.withAlphaComponent(0.16)
-                : NSColor.secondaryLabelColor.withAlphaComponent(0.10)).cgColor
+                ? NSColor.controlAccentColor.withAlphaComponent(0.14)
+                : Theme.fill).cgColor
             chipsStack.addArrangedSubview(button)
         }
     }
@@ -405,8 +416,9 @@ final class RequestPanelController: NSWindowController {
                 action: #selector(toggleRawTapped(_:))
             )
             button.isBordered = false
-            button.contentTintColor = .secondaryLabelColor
-            button.font = .systemFont(ofSize: 10.5)
+            // 可点击的展开控件用强调色，和普通说明文字拉开层级。
+            button.contentTintColor = .controlAccentColor
+            button.font = .systemFont(ofSize: 11.5)
             button.alignment = .left
             container.addArrangedSubview(button)
             rawButton = button
@@ -475,6 +487,7 @@ final class RequestPanelController: NSWindowController {
                 let row = OptionRowButton(
                     title: option.detail.isEmpty ? option.label : "\(option.label)  —  \(option.detail)",
                     tag: index * 1000 + optionIndex,
+                    multiSelect: question.multiSelect,
                     target: self,
                     action: #selector(optionTapped(_:))
                 )
@@ -526,7 +539,7 @@ final class RequestPanelController: NSWindowController {
     private func makeDetail(
         _ text: String,
         color: NSColor = .secondaryLabelColor,
-        size: CGFloat = 11.5,
+        size: CGFloat = 12,
         weight: NSFont.Weight = .regular
     ) -> NSTextField {
         let label = Theme.multilineLabel(text, size: size, weight: weight, color: color)
@@ -611,10 +624,11 @@ final class RequestPanelController: NSWindowController {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = true
-        scroll.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.35)
+        scroll.backgroundColor = Theme.fill
         scroll.borderType = .noBorder
         scroll.wantsLayer = true
         scroll.layer?.cornerRadius = 8
+        scroll.layer?.masksToBounds = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.widthAnchor.constraint(equalToConstant: 404).isActive = true
         scroll.heightAnchor.constraint(equalToConstant: height).isActive = true
@@ -625,7 +639,7 @@ final class RequestPanelController: NSWindowController {
         textView.drawsBackground = false
         textView.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
         textView.textColor = .labelColor
-        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.textContainerInset = NSSize(width: 10, height: 8)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -639,13 +653,7 @@ final class RequestPanelController: NSWindowController {
     }
 
     private func makeDivider() -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        view.widthAnchor.constraint(equalToConstant: 404).isActive = true
-        return view
+        Theme.hairlineView(width: 404)
     }
 
     /// 展开技术细节时保持顶部不动、向下生长，避免按钮跳到鼠标下面造成误点。
@@ -790,10 +798,10 @@ private final class PillButton: NSButton {
     private let highlightColor: NSColor
 
     init(title: String, primary: Bool, target: AnyObject?, action: Selector?) {
-        normalColor = primary ? NSColor.controlAccentColor : NSColor.labelColor.withAlphaComponent(0.18)
+        normalColor = primary ? NSColor.controlAccentColor : Theme.fillStrong
         highlightColor = primary
-            ? NSColor.controlAccentColor.blended(withFraction: 0.18, of: .black) ?? NSColor.controlAccentColor
-            : NSColor.labelColor.withAlphaComponent(0.28)
+            ? NSColor.controlAccentColor.blended(withFraction: 0.14, of: .black) ?? NSColor.controlAccentColor
+            : NSColor.labelColor.withAlphaComponent(0.14)
 
         super.init(frame: .zero)
         self.title = title
@@ -802,7 +810,7 @@ private final class PillButton: NSButton {
         self.action = action
         isBordered = false
         wantsLayer = true
-        layer?.cornerRadius = 6
+        layer?.cornerRadius = Theme.controlRadius
         layer?.backgroundColor = normalColor.cgColor
 
         let textColor: NSColor = primary ? .white : .labelColor
@@ -814,8 +822,8 @@ private final class PillButton: NSButton {
             ]
         )
         translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(greaterThanOrEqualToConstant: 62).isActive = true
-        heightAnchor.constraint(equalToConstant: 28).isActive = true
+        widthAnchor.constraint(greaterThanOrEqualToConstant: 66).isActive = true
+        heightAnchor.constraint(equalToConstant: 30).isActive = true
         focusRingType = .none
     }
 
@@ -842,24 +850,32 @@ private final class ChipButton: NSButton {
 }
 
 /// 自绘选项行：整行可点、选中态由代码维护，避免 NSButton radio 跨问题联动。
+/// 左侧画系统风格的圆形选择指示器，选中态同时用形状和颜色表达，不只靠颜色。
 private final class OptionRowButton: NSButton {
     private let titleText: String
     private var chosen = false
+    private var hovering = false
+    private var tracking: NSTrackingArea?
 
-    init(title: String, tag: Int, target: AnyObject?, action: Selector?) {
+    init(title: String, tag: Int, multiSelect: Bool, target: AnyObject?, action: Selector?) {
         titleText = title
         super.init(frame: .zero)
         self.tag = tag
         self.target = target
         self.action = action
+        // NSButton 默认标题是「Button」，这里完全自绘，必须清空避免重复绘制。
+        self.title = ""
+        self.attributedTitle = NSAttributedString(string: "")
         isBordered = false
         wantsLayer = true
         layer?.cornerRadius = 8
-        layer?.borderWidth = 1
+        layer?.masksToBounds = true
         focusRingType = .none
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 404).isActive = true
-        heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
+        heightAnchor.constraint(greaterThanOrEqualToConstant: 34).isActive = true
+        setAccessibilityRole(multiSelect ? .checkBox : .radioButton)
+        setAccessibilityLabel(title)
         applyStyle()
     }
 
@@ -874,30 +890,85 @@ private final class OptionRowButton: NSButton {
 
     private func applyStyle() {
         layer?.backgroundColor = (chosen
-            ? NSColor.controlAccentColor.withAlphaComponent(0.14)
-            : NSColor.secondaryLabelColor.withAlphaComponent(0.06)).cgColor
-        layer?.borderColor = (chosen
-            ? NSColor.controlAccentColor.withAlphaComponent(0.55)
-            : NSColor.separatorColor.withAlphaComponent(0.5)).cgColor
+            ? NSColor.controlAccentColor.withAlphaComponent(0.12)
+            : (hovering ? Theme.hoverFill : Theme.fill)).cgColor
+        setAccessibilityValue(chosen ? "已选择" : "未选择")
+        needsDisplay = true
+    }
 
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.firstLineHeadIndent = 12
-        paragraph.headIndent = 12
-        paragraph.lineBreakMode = .byTruncatingTail
-        attributedTitle = NSAttributedString(
-            string: titleText,
-            attributes: [
-                .foregroundColor: chosen ? NSColor.controlAccentColor : NSColor.labelColor,
-                .font: NSFont.systemFont(ofSize: 12, weight: chosen ? .semibold : .regular),
-                .paragraphStyle: paragraph
-            ]
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
         )
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let circleRect = NSRect(
+            x: 12,
+            y: (bounds.height - 14) / 2,
+            width: 14,
+            height: 14
+        )
+        let circle = NSBezierPath(ovalIn: circleRect)
+        if chosen {
+            NSColor.controlAccentColor.setFill()
+            circle.fill()
+
+            let check = NSBezierPath()
+            check.move(to: NSPoint(x: circleRect.minX + 3.4, y: circleRect.midY))
+            check.line(to: NSPoint(x: circleRect.midX - 0.6, y: circleRect.minY + 3.4))
+            check.line(to: NSPoint(x: circleRect.maxX - 3.2, y: circleRect.maxY - 3.8))
+            check.lineWidth = 1.8
+            check.lineCapStyle = .round
+            check.lineJoinStyle = .round
+            NSColor.white.setStroke()
+            check.stroke()
+        } else {
+            NSColor.tertiaryLabelColor.setStroke()
+            circle.lineWidth = 1.4
+            circle.stroke()
+        }
+
+        let font = NSFont.systemFont(ofSize: 12, weight: chosen ? .semibold : .regular)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let attributes: [NSAttributedString.Key: Any] = [
+            .foregroundColor: chosen ? NSColor.controlAccentColor : NSColor.labelColor,
+            .font: font,
+            .paragraphStyle: paragraph
+        ]
+        let textHeight = ceil(font.ascender - font.descender)
+        let textRect = NSRect(
+            x: 36,
+            y: floor((bounds.height - textHeight) / 2),
+            width: max(0, bounds.width - 48),
+            height: textHeight
+        )
+        (titleText as NSString).draw(in: textRect, withAttributes: attributes)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        applyStyle()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        applyStyle()
+    }
+
     override func mouseDown(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.20).cgColor
         super.mouseDown(with: event)
         applyStyle()
     }
