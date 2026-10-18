@@ -1,7 +1,10 @@
 import AppKit
 import ServiceManagement
 
-final class MenuBarController {
+final class MenuBarController: NSObject, NSPopoverDelegate {
+    /// 菜单栏弹层显示时收起常驻脉搏条，避免两个面板叠在一起。
+    var onPopoverVisibilityChange: ((Bool) -> Void)?
+
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private let store: SessionStore
@@ -15,9 +18,11 @@ final class MenuBarController {
         self.agents = agents
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.content = StatusViewController(store: store, center: center, agents: agents)
+        super.init()
 
         popover.behavior = .transient
         popover.animates = true
+        popover.delegate = self
         popover.contentViewController = content
 
         if let button = statusItem.button {
@@ -42,7 +47,8 @@ final class MenuBarController {
             store: store,
             pendingIds: center.pendingSessionIds
         )
-        let pending = tasks.filter { $0.state == .needsInput }.count
+        // 只有真实的 hook 请求才算「等你处理」；终端里自己在等输入的不弹红点。
+        let pending = tasks.filter(\.pending).count
         let busy = tasks.filter { $0.state == .running }.count
 
         if pending > 0 {
@@ -81,6 +87,14 @@ final class MenuBarController {
             popover.contentViewController?.view.window?.makeKey()
         }
     }
+
+    func popoverDidShow(_ notification: Notification) {
+        onPopoverVisibilityChange?(true)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        onPopoverVisibilityChange?(false)
+    }
 }
 
 // MARK: - 状态面板
@@ -94,6 +108,8 @@ final class StatusViewController: NSViewController {
     private let agents: TaskStore
     private let stack = NSStackView()
     private let scroll = NSScrollView()
+    private let footerBar = NSView()
+    private var launchCheckbox: NSButton?
 
     init(store: SessionStore, center: RequestCenter, agents: TaskStore) {
         self.store = store
@@ -146,12 +162,19 @@ final class StatusViewController: NSViewController {
             document.widthAnchor.constraint(equalToConstant: 392)
         ])
 
+        footerBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scroll)
+        view.addSubview(footerBar)
+        buildFooter()
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: view.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            scroll.bottomAnchor.constraint(equalTo: footerBar.topAnchor),
+            footerBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            footerBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            footerBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            footerBar.heightAnchor.constraint(equalToConstant: 42)
         ])
     }
 
@@ -167,6 +190,7 @@ final class StatusViewController: NSViewController {
             pendingIds: center.pendingSessionIds
         )
         let needs = tasks.filter { $0.state == .needsInput }
+        let waiting = tasks.filter { $0.state == .waitingInput }
         let stale = tasks.filter { $0.state == .stale }
         let running = tasks.filter { $0.state == .running }
         let completed = tasks.filter { $0.state == .completed }
@@ -174,6 +198,7 @@ final class StatusViewController: NSViewController {
 
         stack.addArrangedSubview(header(
             needs: needs.count,
+            waiting: waiting.count,
             stale: stale.count,
             running: running.count,
             completed: completed.count,
@@ -184,6 +209,10 @@ final class StatusViewController: NSViewController {
         if !needs.isEmpty {
             stack.addArrangedSubview(sectionTitle("等你处理", count: needs.count))
             for task in needs { stack.addArrangedSubview(taskRow(task)) }
+        }
+        if !waiting.isEmpty {
+            stack.addArrangedSubview(sectionTitle("等待输入", count: waiting.count))
+            for task in waiting { stack.addArrangedSubview(taskRow(task)) }
         }
         if !stale.isEmpty {
             stack.addArrangedSubview(sectionTitle("可能卡住", count: stale.count))
@@ -206,14 +235,14 @@ final class StatusViewController: NSViewController {
             stack.addArrangedSubview(emptyState())
         }
 
-        stack.addArrangedSubview(footer())
+        launchCheckbox?.state = SMAppService.mainApp.status == .enabled ? .on : .off
 
         // 先完成一次布局，否则 fittingSize 会偏小，弹层会被截断。
         stack.layoutSubtreeIfNeeded()
         view.layoutSubtreeIfNeeded()
 
         let contentHeight = stack.fittingSize.height
-        let height = min(max(contentHeight, 180), 560)
+        let height = min(max(contentHeight + 42, 180), 560)
         preferredContentSize = NSSize(width: 392, height: height)
         view.setFrameSize(NSSize(width: 392, height: height))
         view.layoutSubtreeIfNeeded()
@@ -224,7 +253,7 @@ final class StatusViewController: NSViewController {
 
     // MARK: - 组件
 
-    private func header(needs: Int, stale: Int, running: Int, completed: Int, idle: Int) -> NSView {
+    private func header(needs: Int, waiting: Int, stale: Int, running: Int, completed: Int, idle: Int) -> NSView {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.widthAnchor.constraint(equalToConstant: 392).isActive = true
@@ -232,20 +261,18 @@ final class StatusViewController: NSViewController {
         let title = Theme.label("Claude Pulse", size: 14, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        let subtitleText: String
-        if needs > 0 {
-            subtitleText = "\(needs) 个等你处理 · \(running) 个运行中 · \(completed) 个已完成"
-                + (stale > 0 ? " · \(stale) 个可能卡住" : "")
-        } else if stale > 0 {
-            subtitleText = "\(stale) 个可能卡住 · \(running) 个运行中 · \(completed) 个已完成"
-        } else {
-            subtitleText = "\(running) 个运行中 · \(completed) 个已完成 · \(idle) 个空闲"
-        }
-        let subtitle = Theme.label(
-            subtitleText,
-            size: 10.5,
-            color: needs > 0 ? .systemRed : .secondaryLabelColor
-        )
+        var parts: [String] = []
+        if needs > 0 { parts.append("\(needs) 个等你处理") }
+        if waiting > 0 { parts.append("\(waiting) 个等待输入") }
+        if running > 0 { parts.append("\(running) 个运行中") }
+        if completed > 0 { parts.append("\(completed) 个已完成") }
+        if stale > 0 { parts.append("\(stale) 个可能卡住") }
+        if parts.isEmpty { parts.append("\(idle) 个空闲") }
+        let subtitleText = parts.joined(separator: " · ")
+        let subtitleColor: NSColor = needs > 0
+            ? .systemRed
+            : (waiting > 0 ? .systemOrange : .secondaryLabelColor)
+        let subtitle = Theme.label(subtitleText, size: 10.5, color: subtitleColor)
         subtitle.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(title)
@@ -266,7 +293,7 @@ final class StatusViewController: NSViewController {
         container.widthAnchor.constraint(equalToConstant: 392).isActive = true
 
         let hint = Theme.label(
-            "点击任务进入会话 · 进入后按 ← 返回 agents 列表",
+            "点击任务打开对应终端会话",
             size: 9.5,
             color: .tertiaryLabelColor
         )
@@ -310,7 +337,7 @@ final class StatusViewController: NSViewController {
         if task.state == .running {
             let start = task.startedAt ?? task.lastActivity ?? Date()
             detailParts.append("已运行 \(Theme.elapsed(start))")
-        } else if task.state == .needsInput {
+        } else if task.state == .needsInput || task.state == .waitingInput {
             let waitingSince = task.lastActivity ?? task.startedAt ?? Date()
             detailParts.append("已等待 \(Theme.elapsed(waitingSince))")
         }
@@ -318,14 +345,16 @@ final class StatusViewController: NSViewController {
         let activityText: String?
         switch task.state {
         case .needsInput:
-            activityText = task.pending ? "点击处理" : "等待输入"
+            activityText = "点击处理"
+        case .waitingInput:
+            activityText = "在终端等待输入 · 点击打开"
         case .stale:
             activityText = "可能卡住 · 最近活动 \(Theme.relativeTime(task.lastActivity ?? Date()))"
         case .running:
             let current = task.activityText ?? "正在运行"
             activityText = "\(current) · 最近活动 \(Theme.relativeTime(task.lastActivity ?? Date()))"
         case .completed:
-            activityText = "已完成 · 点击重新打开"
+            activityText = "点击重新打开"
         case .idle:
             activityText = "最近活动 \(Theme.relativeTime(task.lastActivity ?? Date()))"
         }
@@ -340,7 +369,7 @@ final class StatusViewController: NSViewController {
         )
         row.toolTip = task.pending
             ? "\(task.cwd)\n点击召回这张确认卡"
-            : "\(task.cwd)\n点击进入任务；进入后按 ← 返回 agents 列表"
+            : "\(task.cwd)\n点击打开对应终端会话"
         return row
     }
 
@@ -366,10 +395,13 @@ final class StatusViewController: NSViewController {
         return container
     }
 
-    private func footer() -> NSView {
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.widthAnchor.constraint(equalToConstant: 392).isActive = true
+    /// 底栏固定在最下方，不跟着列表滚动。
+    private func buildFooter() {
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.55).cgColor
+        line.translatesAutoresizingMaskIntoConstraints = false
+        footerBar.addSubview(line)
 
         let refresh = NSButton(title: "刷新", target: self, action: #selector(refreshTapped))
         refresh.bezelStyle = .inline
@@ -384,25 +416,28 @@ final class StatusViewController: NSViewController {
         launch.font = .systemFont(ofSize: 10.5)
         launch.state = SMAppService.mainApp.status == .enabled ? .on : .off
         launch.translatesAutoresizingMaskIntoConstraints = false
+        launchCheckbox = launch
 
         let quit = NSButton(title: "退出", target: self, action: #selector(quitTapped))
         quit.bezelStyle = .inline
         quit.font = .systemFont(ofSize: 11)
         quit.translatesAutoresizingMaskIntoConstraints = false
 
-        container.addSubview(refresh)
-        container.addSubview(launch)
-        container.addSubview(quit)
+        footerBar.addSubview(refresh)
+        footerBar.addSubview(launch)
+        footerBar.addSubview(quit)
         NSLayoutConstraint.activate([
-            refresh.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
-            refresh.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            refresh.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
-            launch.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            launch.centerYAnchor.constraint(equalTo: refresh.centerYAnchor),
-            quit.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
-            quit.centerYAnchor.constraint(equalTo: refresh.centerYAnchor)
+            line.leadingAnchor.constraint(equalTo: footerBar.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: footerBar.trailingAnchor),
+            line.topAnchor.constraint(equalTo: footerBar.topAnchor),
+            line.heightAnchor.constraint(equalToConstant: 1),
+            refresh.leadingAnchor.constraint(equalTo: footerBar.leadingAnchor, constant: 14),
+            refresh.centerYAnchor.constraint(equalTo: footerBar.centerYAnchor),
+            launch.centerXAnchor.constraint(equalTo: footerBar.centerXAnchor),
+            launch.centerYAnchor.constraint(equalTo: footerBar.centerYAnchor),
+            quit.trailingAnchor.constraint(equalTo: footerBar.trailingAnchor, constant: -14),
+            quit.centerYAnchor.constraint(equalTo: footerBar.centerYAnchor)
         ])
-        return container
     }
 
     // MARK: - 动作
@@ -437,7 +472,15 @@ final class StatusViewController: NSViewController {
         onOpenTask?()
         // 有存活卡片就召回；没有（例如后台任务已 block、hook 已断开）就 attach 进终端。
         if task.pending, center.focus(sessionId: task.sessionId) { return }
-        TerminalLauncher.openTask(attachId: task.attachId, name: task.name)
+        TerminalLauncher.openTask(
+            attachId: task.attachId,
+            name: task.name,
+            cwd: task.cwd,
+            isBackground: task.isBackground,
+            pid: task.pid,
+            sessionId: task.sessionId,
+            resume: task.state == .completed
+        )
     }
 }
 
@@ -481,7 +524,7 @@ private final class ClickableRow: NSView {
 
         var textViews: [NSView] = [titleLabel, detailLabel]
         if let activity, !activity.isEmpty {
-            let activityLabel = Theme.label(activity, size: 10, color: .tertiaryLabelColor)
+            let activityLabel = Theme.label(activity, size: 10, color: .secondaryLabelColor)
             activityLabel.lineBreakMode = .byTruncatingTail
             textViews.append(activityLabel)
         }
@@ -513,7 +556,7 @@ private final class ClickableRow: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel("\(title)，\(status)")
-        setAccessibilityHelp("点击进入任务；进入后按 ← 返回 agents 列表")
+        setAccessibilityHelp("点击打开对应终端会话")
     }
 
     @available(*, unavailable)
@@ -529,6 +572,7 @@ private final class ClickableRow: NSView {
     private static func statusColor(_ state: TaskState) -> NSColor {
         switch state {
         case .needsInput: return .systemRed
+        case .waitingInput: return .systemOrange
         case .stale: return .systemOrange
         case .running: return .systemBlue
         case .completed: return .systemGreen

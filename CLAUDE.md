@@ -12,6 +12,7 @@ macOS 菜单栏 + 悬浮确认面板，用于观测多个 Claude Code CLI 会话
 - 不做「静默批准」：任何自动放行都必须由用户在浮层上显式点击。
 - **所有需要用户操作的提醒必须是中文人话**：说清楚「要做什么、有什么影响、你要决定什么」，按钮也是中文动作。原始命令/路径只放在「查看完整命令」里，默认不展示大段代码。
 - 提醒必须显眼但不抢键盘焦点：常驻脉搏条 + 确认卡升级（脉冲、声音、抬到最前、移动到鼠标所在屏幕），不改变用户当前输入焦点。
+- 点击任意任务卡片必须打开对应终端会话：后台任务用 `claude attach`，交互式会话激活 Terminal（有自动化权限时按 tty 精确选中标签页），已完成会话用 `claude --resume`。终端启动走 `.command` + Launch Services，不把 Automation 权限当必需依赖。
 
 ## 目录结构
 
@@ -28,6 +29,8 @@ claude-pulse/
     Humanizer.swift      工具调用 → 中文描述（摘要、影响、动作、风险）
     TaskStore.swift      `claude agents --json` 主数据源 + 注册表降级 + 最近完成
     SessionStore.swift   会话注册表轮询 + 活动流 + 最近完成列表
+    TerminalLauncher.swift 任务卡片 → 终端：attach / 激活标签页 / resume
+    DebugLog.swift       CLAUDE_PULSE_DEBUG 门控的调试日志
     RequestCenter.swift  请求队列、chips 切换、每请求超时/提醒、/status 快照
     UI/                  脉搏条、菜单栏、状态面板、确认浮层
   Resources/Info.plist   App bundle 配置（LSUIElement）
@@ -44,7 +47,7 @@ claude-pulse/
 
 1. **状态主源**：`claude agents --json`（**不加 `--all`**）每 5 秒轮询。官方支持的外部读取接口，含 attach 短 id、kind、status/waitingFor、state。
 2. **降级备胎**：`claude agents` 连续 2 次失败 → 改读 `~/.claude/sessions/<pid>.json` 注册表；脉搏条黄点提示「数据降级」。
-3. **严格过滤**：`pid == nil && status == nil` 的僵尸记录直接隐藏；`needsInput = hook 队列 pending OR waitingFor != nil`，`status == "waiting"` 单独不算。
+3. **严格过滤**：`pid == nil && status == nil` 的僵尸记录直接隐藏。红色 `needsInput` 只来自 hook 队列里存活的请求；`waitingFor != nil` 但没有存活卡片的标为橙色 `waitingInput`，不计入「请求等你处理」。`status == "waiting"` 单独不算。
 4. **最近完成**：内存保留 10 分钟，由 `SessionEnd` / `Notification: agent_completed` 驱动。`Stop` 只表示「一轮回复结束」，只更新活动、不弹提示。
 5. **需要确认**：`PermissionRequest` hook（权限确认、计划批准）。
 6. **需要回答**：`PreToolUse` matcher `AskUserQuestion`，返回 `updatedInput.answers`。

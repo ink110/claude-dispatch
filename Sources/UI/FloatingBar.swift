@@ -16,6 +16,7 @@ final class FloatingBarController {
     private var healthTimer: Timer?
     private var health: HookHealthLevel = .ok
     private var pinned = false
+    private var suppressed = false
 
     /// 确认卡会挂在这个区域下方。
     var anchorRect: NSRect? {
@@ -65,6 +66,18 @@ final class FloatingBarController {
         }
     }
 
+    /// 菜单栏弹层打开时隐藏脉搏条，避免两个面板重叠。
+    func setSuppressed(_ value: Bool) {
+        guard suppressed != value else { return }
+        suppressed = value
+        if value {
+            hideExpanded()
+            compactPanel.orderOut(nil)
+        } else {
+            refresh()
+        }
+    }
+
     func start() {
         restorePosition()
         compactPanel.orderFrontRegardless()
@@ -97,7 +110,8 @@ final class FloatingBarController {
             store: store,
             pendingIds: center.pendingSessionIds
         )
-        let pending = tasks.filter { $0.state == .needsInput }.count
+        let pending = tasks.filter(\.pending).count
+        let waiting = tasks.filter { $0.state == .waitingInput }.count
         let running = tasks.filter { $0.state == .running }.count
         let stale = tasks.filter { $0.state == .stale }.count
         let completed = tasks.filter { $0.state == .completed }.count
@@ -114,6 +128,7 @@ final class FloatingBarController {
 
         barView.update(
             pending: pending,
+            waiting: waiting,
             running: running,
             stale: stale,
             completed: completed,
@@ -123,7 +138,7 @@ final class FloatingBarController {
         )
 
         if !tasks.isEmpty || effectiveHealth != .ok {
-            compactPanel.orderFrontRegardless()
+            if !suppressed { compactPanel.orderFrontRegardless() }
         } else {
             compactPanel.orderOut(nil)
             hideExpanded()
@@ -365,6 +380,7 @@ private final class FloatingBarView: NSVisualEffectView {
 
     func update(
         pending: Int,
+        waiting: Int,
         running: Int,
         stale: Int,
         completed: Int,
@@ -386,6 +402,9 @@ private final class FloatingBarView: NSVisualEffectView {
         if pending > 0 {
             state = .needsInput
             text = "\(pending) 个请求等你处理"
+        } else if waiting > 0 {
+            state = .waitingInput
+            text = "\(waiting) 个任务等待输入"
         } else if stale > 0 {
             state = .stale
             text = "\(stale) 个任务可能卡住"

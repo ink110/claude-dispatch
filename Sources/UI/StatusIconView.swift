@@ -53,6 +53,9 @@ final class StatusIconView: NSView {
             symbol = "bell.fill"
             color = .systemRed
             pulses = true
+        case .waitingInput:
+            symbol = "hourglass"
+            color = .systemOrange
         case .stale:
             symbol = "exclamationmark.triangle.fill"
             color = .systemOrange

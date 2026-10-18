@@ -531,7 +531,13 @@ final class RequestCenter {
         finish(request)
         if attachAfter, let attachId = request.attachId {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                TerminalLauncher.openTask(attachId: attachId, name: request.sessionName)
+                TerminalLauncher.openTask(
+                    attachId: attachId,
+                    name: request.sessionName,
+                    cwd: request.cwd,
+                    isBackground: true,
+                    sessionId: request.sessionId
+                )
             }
         }
     }

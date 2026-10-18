@@ -8,6 +8,11 @@ func printErr(_ message: String) {
 // CLI 模式：不启动 App，只做 hooks 安装/卸载（install.sh 调用，保证配置只有这一份实现）。
 let flags = Set(CommandLine.arguments.dropFirst())
 
+// 排障开关：`open -a ClaudePulse --args --debug` 也能打开日志。
+if flags.contains("--debug") {
+    setenv("CLAUDE_PULSE_DEBUG", "1", 1)
+}
+
 if flags.contains("--install-hooks") {
     if HookInstaller.install() {
         print("hooks 已写入（幂等，已自动备份）。")
@@ -26,6 +31,27 @@ if flags.contains("--uninstall-hooks") {
         printErr("hooks 移除失败。")
         exit(1)
     }
+}
+
+// 排障：以 App 自身身份验证「打开任务」链路（Terminal 自动化权限等）。
+if let index = CommandLine.arguments.firstIndex(of: "--open-attach"),
+   CommandLine.arguments.indices.contains(index + 1) {
+    TerminalLauncher.openTask(attachId: CommandLine.arguments[index + 1], name: "Claude Pulse 测试")
+    RunLoop.main.run(until: Date().addingTimeInterval(3))
+    exit(0)
+}
+
+if let index = CommandLine.arguments.firstIndex(of: "--open-session"),
+   CommandLine.arguments.indices.contains(index + 1),
+   let pid = Int32(CommandLine.arguments[index + 1]) {
+    TerminalLauncher.openTask(
+        attachId: nil,
+        name: "Claude Pulse 测试",
+        isBackground: false,
+        pid: pid
+    )
+    RunLoop.main.run(until: Date().addingTimeInterval(3))
+    exit(0)
 }
 
 let app = NSApplication.shared

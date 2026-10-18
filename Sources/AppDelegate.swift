@@ -40,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar = MenuBarController(store: store, center: center, agents: agents)
         floatingBar = FloatingBarController(store: store, center: center, agents: agents)
         floatingBar?.start()
+        menuBar?.onPopoverVisibilityChange = { [weak self] visible in
+            self?.floatingBar?.setSuppressed(visible)
+        }
 
         center.anchorProvider = { [weak self] in self?.floatingBar?.anchorRect }
         center.onChange = { [weak self] in

@@ -30,7 +30,10 @@ struct AgentListItem: Decodable {
 
 /// 和 agents 列表对齐的四种主状态，外加「可能卡住」的警告态。
 enum TaskState {
+    /// 有真实的 hook 请求在浮层里等你操作。
     case needsInput
+    /// 终端自己在等输入，但 App 没有可展示的卡片（例如 hook 已断开）。
+    case waitingInput
     case stale
     case running
     case completed
@@ -39,16 +42,18 @@ enum TaskState {
     var sortOrder: Int {
         switch self {
         case .needsInput: return 0
-        case .stale: return 1
-        case .running: return 2
-        case .completed: return 3
-        case .idle: return 4
+        case .waitingInput: return 1
+        case .stale: return 2
+        case .running: return 3
+        case .completed: return 4
+        case .idle: return 5
         }
     }
 
     var label: String {
         switch self {
         case .needsInput: return "等你处理"
+        case .waitingInput: return "等待输入"
         case .stale: return "可能卡住"
         case .running: return "运行中"
         case .completed: return "已完成"
@@ -63,6 +68,8 @@ struct TaskItem {
     let name: String
     let cwd: String
     let isBackground: Bool
+    /// 交互式会话靠 pid 找到它所在的终端窗口；后台任务用 attachId。
+    let pid: Int32?
     let state: TaskState
     let startedAt: Date?
     let lastActivity: Date?
@@ -172,6 +179,18 @@ final class TaskStore {
 
 /// 把 agents 列表、本地会话注册表和活动流合并成悬停列表要显示的任务。
 enum TaskBuilder {
+    /// 后台会话生成标题前，注册表里放的是首条 prompt，过长就不适合当卡片标题。
+    private static func displayName(_ raw: String, cwd: String, sessionId: String) -> String {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty && name.count <= 24 && !name.contains("\n") {
+            return name
+        }
+        let folder = (cwd as NSString).lastPathComponent
+        return folder.isEmpty
+            ? String(sessionId.prefix(8))
+            : "\(folder) · \(String(sessionId.prefix(4)))"
+    }
+
     static func tasks(
         agentItems: [AgentListItem],
         store: SessionStore,
@@ -199,7 +218,7 @@ enum TaskBuilder {
 
             let state: TaskState
             if waiting {
-                state = .needsInput
+                state = pending ? .needsInput : .waitingInput
             } else if stale {
                 state = .stale
             } else if item.status == "busy" || live?.isBusy == true {
@@ -214,6 +233,8 @@ enum TaskBuilder {
             switch state {
             case .needsInput:
                 activityText = "等你处理"
+            case .waitingInput:
+                activityText = "在终端等待输入 · 点击打开"
             case .stale:
                 activityText = "可能卡住"
             case .running:
@@ -227,9 +248,10 @@ enum TaskBuilder {
             tasks.append(TaskItem(
                 sessionId: item.sessionId,
                 attachId: item.id,
-                name: item.displayName,
+                name: displayName(item.displayName, cwd: item.cwd, sessionId: item.sessionId),
                 cwd: item.cwd,
                 isBackground: item.isBackground,
+                pid: item.pid.map(Int32.init),
                 state: state,
                 startedAt: item.startedDate,
                 lastActivity: last,
@@ -251,7 +273,7 @@ enum TaskBuilder {
             } else if session.isBusy {
                 state = .running
             } else if session.isWaiting {
-                state = .needsInput
+                state = .waitingInput
             } else {
                 state = .idle
             }
@@ -259,13 +281,16 @@ enum TaskBuilder {
             tasks.append(TaskItem(
                 sessionId: session.sessionId,
                 attachId: session.jobId,
-                name: session.displayName,
+                name: displayName(session.displayName, cwd: session.cwd, sessionId: session.sessionId),
                 cwd: session.cwd,
                 isBackground: session.isBackground,
+                pid: session.pid,
                 state: state,
                 startedAt: session.startedDate,
                 lastActivity: activity?.lastEventAt ?? session.lastActivity,
-                activityText: activity?.currentSummary ?? activity?.lastEventSummary,
+                activityText: state == .waitingInput
+                    ? "在终端等待输入 · 点击打开"
+                    : (activity?.currentSummary ?? activity?.lastEventSummary),
                 pending: pending
             ))
         }
@@ -276,9 +301,10 @@ enum TaskBuilder {
             tasks.append(TaskItem(
                 sessionId: done.sessionId,
                 attachId: done.attachId,
-                name: done.name,
+                name: displayName(done.name, cwd: done.cwd, sessionId: done.sessionId),
                 cwd: done.cwd,
                 isBackground: done.isBackground,
+                pid: nil,
                 state: .completed,
                 startedAt: nil,
                 lastActivity: done.completedAt,
