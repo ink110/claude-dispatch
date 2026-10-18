@@ -120,7 +120,11 @@ Claude Code 在会话启动时读取 hooks。安装或修复后，新启动的�
 cc-switch 可能重写 `~/.claude/settings.json`，把 hooks 清掉。脉搏条会显示「点击修复」，点一下即可；也可以重新执行 `./scripts/install.sh`（幂等）。
 
 **点了交互式任务只切到 Terminal，没选中对应标签页？**
-精确选中标签页需要「控制终端」的自动化权限：系统设置 → 隐私与安全性 → 自动化 → 允许 Claude Pulse 控制「终端」。未授权时只会把终端切到前台；后台任务的 `claude attach` 不受影响。
+精确选中标签页需要「控制终端」的自动化权限：系统设置 → 隐私与安全性 → 自动化 → 允许 Claude Pulse 控制「终端」。未授权时只会把终端切到前台；后台任务的 `claude attach` 不受影响。如果授权弹窗没有出现，执行下面的命令主动调出：
+
+```bash
+open -n ~/Applications/ClaudePulse.app --args --request-automation
+```
 
 **端口被占用？**
 默认端口 18765。关闭另一个 Claude Pulse 实例后再启动。
@@ -139,6 +143,7 @@ CLAUDE_PULSE_TIMEOUT=120 ~/Applications/ClaudePulse.app/Contents/MacOS/ClaudePul
 
 - **登录时启动**：首次从 `~/Applications` 启动会默认注册；之后可在状态面板底部用「登录时启动」开关控制。
 - **调试日志**：默认关闭。需要排障时用 `CLAUDE_PULSE_DEBUG=1` 启动 App，或 `open -a ClaudePulse --args --debug`；日志写入 `~/.claude-pulse/debug.log`，超过 1MB 自动清空。
+- **调试开关**：`--show-status` 启动即展开状态面板；`--request-automation` 主动调出「控制终端」授权框；`--focus-pid <pid>` 启动后立即尝试聚焦该进程所在的终端标签页（验证自动化链路）。
 
 ## 开发
 

@@ -41,6 +41,12 @@ if let index = CommandLine.arguments.firstIndex(of: "--open-attach"),
     exit(0)
 }
 
+// 排障：在真实 App 进程里触发一次「聚焦交互式会话」，验证自动化权限链路。
+if let index = CommandLine.arguments.firstIndex(of: "--focus-pid"),
+   CommandLine.arguments.indices.contains(index + 1) {
+    setenv("CLAUDE_PULSE_FOCUS_PID", CommandLine.arguments[index + 1], 1)
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--open-session"),
    CommandLine.arguments.indices.contains(index + 1),
    let pid = Int32(CommandLine.arguments[index + 1]) {
@@ -51,6 +57,15 @@ if let index = CommandLine.arguments.firstIndex(of: "--open-session"),
         pid: pid
     )
     RunLoop.main.run(until: Date().addingTimeInterval(20))
+    exit(0)
+}
+
+// 排障：以 App 身份主动弹系统「控制终端」授权框，等待用户选择后退出。
+if flags.contains("--request-automation") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let status = TerminalLauncher.requestAutomationPermission()
+    print("automation-status=\(status)")
     exit(0)
 }
 

@@ -66,6 +66,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.menuBar?.showPopover()
             }
         }
+
+        // 排障：在真实 App 进程里验证「点卡片 → 聚焦终端标签页」链路。
+        if let raw = ProcessInfo.processInfo.environment["CLAUDE_PULSE_FOCUS_PID"],
+           let pid = Int32(raw) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                TerminalLauncher.openTask(
+                    attachId: nil,
+                    name: "Claude Pulse 测试",
+                    isBackground: false,
+                    pid: pid
+                )
+            }
+        }
     }
 
     /// 首次从 ~/Applications 启动时默认开启登录自启；之后由状态面板里的开关控制。

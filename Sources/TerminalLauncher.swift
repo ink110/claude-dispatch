@@ -10,7 +10,6 @@ import Darwin
 enum TerminalLauncher {
     private static let queue = DispatchQueue(label: "com.claudepulse.terminal", qos: .userInitiated)
     private static let permissionQueue = DispatchQueue(label: "com.claudepulse.terminal.permission")
-    private static var permissionAsked = false
     private static let stateLock = NSLock()
     private static var automationAllowed = false
 
@@ -129,7 +128,9 @@ enum TerminalLauncher {
 
     // MARK: - 交互式会话定位
 
-    /// 只做权限已授予时的精确聚焦；未授权时静默跳过，避免弹窗卡住后台队列。
+    /// 直接执行 AppleScript 精确聚焦对应标签页。
+    /// 不用 AEDeterminePermissionToAutomateTarget 预检：首次授权或待授权时它会无限阻塞。
+    /// 已授权时立即生效；未授权时由系统弹授权框或返回错误，且全程在后台队列，不卡 UI。
     private static func focusTerminalTab(forPID pid: Int32) {
         debugLog("terminal: focusing pid \(pid)")
         guard let tty = ttyForPID(pid) else {
@@ -137,33 +138,8 @@ enum TerminalLauncher {
             return
         }
         debugLog("terminal: tty for pid \(pid) = \(tty)")
-
-        if isAutomationAllowed() {
-            focusTab(tty: tty)
-            return
-        }
-
-        // 权限检查和系统弹窗可能长时间不返回，放在独立队列，绝不阻塞任务打开。
         permissionQueue.async {
-            let permission = automationPermission(ask: false)
-            if permission == noErr {
-                setAutomationAllowed(true)
-                focusTab(tty: tty)
-                return
-            }
-            if permission == errAEEventWouldRequireUserConsent || permission == OSStatus(-1744) {
-                guard !permissionAsked else { return }
-                permissionAsked = true
-                debugLog("terminal: requesting automation permission")
-                let result = automationPermission(ask: true)
-                debugLog("terminal: automation permission result=\(result)")
-                if result == noErr {
-                    setAutomationAllowed(true)
-                    focusTab(tty: tty)
-                }
-                return
-            }
-            debugLog("terminal: automation unavailable (\(permission)), terminal activated only")
+            focusTab(tty: tty)
         }
     }
 
@@ -215,6 +191,31 @@ enum TerminalLauncher {
 
     private static func processAlive(_ pid: Int32) -> Bool {
         kill(pid, 0) == 0
+    }
+
+    /// 主动触发系统「控制终端」授权弹窗（排障/首次授权用）。
+    @discardableResult
+    static func requestAutomationPermission() -> OSStatus {
+        // 真实 Apple Event 最容易触发系统授权框；preflight API 在部分系统版本上不弹窗。
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "tell application \"Terminal\" to get name"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        debugLog("terminal: automation probe exit=\(process.terminationStatus)")
+
+        var status = automationPermission(ask: false)
+        debugLog("terminal: automation status after probe=\(status)")
+        if status != noErr {
+            status = automationPermission(ask: true)
+            debugLog("terminal: automation request status=\(status)")
+        }
+        if status == noErr {
+            setAutomationAllowed(true)
+        }
+        return status
     }
 
     private static func isAutomationAllowed() -> Bool {

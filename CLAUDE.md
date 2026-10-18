@@ -78,4 +78,6 @@ claude-pulse/
 - 提醒内容验收：权限卡默认不出现大段代码；中文摘要、影响说明、动作按钮齐全；「查看完整命令」能展开且不误触允许。
 - UI 验收只看截图（`screencapture`），**不合成鼠标点击**；快捷键必须点击卡片后才生效。
 - 真实验证：在临时项目里配置 hook，跑交互式 `claude` 触发 `PermissionRequest`；新启动的会话才会加载新 hooks。
+- 自动化权限：`open -n ~/Applications/ClaudePulse.app --args --request-automation` 主动调出「控制终端」授权框（首次授权或排障用）。
+- 终端聚焦：`open ~/Applications/ClaudePulse.app --args --focus-pid <pid>` 在真实 App 进程里触发一次标签页聚焦，配合 `~/.claude-pulse/debug.log` 断言 `focused tty`。
 - 调试日志默认关闭；`CLAUDE_PULSE_DEBUG=1` 开启，写入 `~/.claude-pulse/debug.log`，超过 1MB 自动清空。
