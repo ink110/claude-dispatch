@@ -23,30 +23,40 @@ claude-pulse/
     main.swift           进程入口
     AppDelegate.swift    生命周期、组装各模块
     Models.swift         数据模型与会话活动
-    HookServer.swift     localhost HTTP hook 服务（决策 + 活动流）
-    HookInstaller.swift  hooks 健康检查与 App 内修复
+    HookServer.swift     localhost HTTP hook 服务（决策 + 活动流 + GET /status）
+    HookInstaller.swift  hooks 安装/卸载/健康检查（唯一实现）
     Humanizer.swift      工具调用 → 中文描述（摘要、影响、动作、风险）
-    SessionStore.swift   会话注册表轮询 + 活动流
-    RequestCenter.swift  待确认请求队列、提醒升级、超时
+    TaskStore.swift      `claude agents --json` 主数据源 + 注册表降级 + 最近完成
+    SessionStore.swift   会话注册表轮询 + 活动流 + 最近完成列表
+    RequestCenter.swift  请求队列、chips 切换、每请求超时/提醒、/status 快照
     UI/                  脉搏条、菜单栏、状态面板、确认浮层
   Resources/Info.plist   App bundle 配置（LSUIElement）
   scripts/
     build.sh             编译并组装 .app
-    install.sh           安装 hooks（幂等、带备份）
+    install.sh           编译 + 安装 App + 调 `ClaudePulse --install-hooks`
     uninstall.sh         移除 hooks
+    test-humanizer.sh    Humanizer 纯函数测试（复合命令/进程/敏感路径）
+    smoke.sh             curl + /status 冒烟测试（不合成鼠标点击）
   build/                 构建产物（不提交）
 ```
 
 ## 数据来源
 
-1. **状态**：`~/.claude/sessions/<pid>.json`（Claude Code 自己维护的会话注册表，主来源）。
-2. **需要确认**：`PermissionRequest` hook（权限确认、计划批准）。
-3. **需要回答**：`PreToolUse` matcher `AskUserQuestion`，返回 `updatedInput.answers`。
-4. **在做什么**：`PreToolUse` / `PostToolUse` matcher `*`，URL 带 `mode=activity`；只记录活动，立即放行，不参与权限决策。
-5. **完成/空闲**：`Stop`、`Notification` hook。
-6. **失效检查**：App 启动时和每 5 分钟检查一次 `~/.claude/settings.json` 是否仍有本项目 hooks；丢失时脉搏条显示「点击修复」。
+1. **状态主源**：`claude agents --json`（**不加 `--all`**）每 5 秒轮询。官方支持的外部读取接口，含 attach 短 id、kind、status/waitingFor、state。
+2. **降级备胎**：`claude agents` 连续 2 次失败 → 改读 `~/.claude/sessions/<pid>.json` 注册表；脉搏条黄点提示「数据降级」。
+3. **严格过滤**：`pid == nil && status == nil` 的僵尸记录直接隐藏；`needsInput = hook 队列 pending OR waitingFor != nil`，`status == "waiting"` 单独不算。
+4. **最近完成**：内存保留 10 分钟，由 `SessionEnd` / `Notification: agent_completed` 驱动。`Stop` 只表示「一轮回复结束」，只更新活动、不弹提示。
+5. **需要确认**：`PermissionRequest` hook（权限确认、计划批准）。
+6. **需要回答**：`PreToolUse` matcher `AskUserQuestion`，返回 `updatedInput.answers`。
+7. **在做什么**：`PreToolUse` / `PostToolUse` matcher `*`，URL 带 `mode=activity`；只记录活动，立即放行，不参与权限决策；注册表刷新 debounce 0.5s。
+8. **失效检查**：App 启动时和每 5 分钟检查一次 `~/.claude/settings.json`；决策 hooks 缺失或 token 不一致 = 红「点击修复」，活动流缺失 = 黄点。
+9. **排障**：`GET /status?token=…` 返回队列/活动请求/会话/健康快照（状态迁移时原子生成）。
 
 不要依赖 `~/.claude/jobs/` 和 daemon socket，官方明确不是稳定接口。
+
+## 兼容性
+
+`onFailure: "block"` 需要 Claude Code ≥ 2.1.295；当前本机版本按「hook 失败 = 非阻塞回落」设计：交互式会话回终端原生提示，`-p` 任务视为拒绝，agent view 后台任务进入 blocked 等待。不要假设 App 挂掉时 hook 会 block。
 
 ## 命名与代码风格
 
@@ -58,8 +68,11 @@ claude-pulse/
 ## 验证
 
 - 构建：`./scripts/build.sh`
-- 安装：`./scripts/install.sh`（会备份 `~/.claude/settings.json`）
+- 单元测试：`./scripts/test-humanizer.sh`
+- 安装：`./scripts/install.sh`（App + hooks 一次装好，自动备份 settings.json）
+- 冒烟：`./scripts/smoke.sh`（需要 App 已启动；用 `/status` 断言入队、双请求、断连清理）
 - 卸载：`./scripts/uninstall.sh`
-- 冒烟：用 `curl` 向 `/hook` 发构造事件，确认浮层出现并能回写 JSON；活动事件用 `?mode=activity`。
 - 提醒内容验收：权限卡默认不出现大段代码；中文摘要、影响说明、动作按钮齐全；「查看完整命令」能展开且不误触允许。
+- UI 验收只看截图（`screencapture`），**不合成鼠标点击**；快捷键必须点击卡片后才生效。
 - 真实验证：在临时项目里配置 hook，跑交互式 `claude` 触发 `PermissionRequest`；新启动的会话才会加载新 hooks。
+- 调试日志默认关闭；`CLAUDE_PULSE_DEBUG=1` 开启，写入 `~/.claude-pulse/debug.log`，超过 1MB 自动清空。

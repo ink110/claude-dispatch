@@ -486,9 +486,9 @@ final class RequestPanelController: NSWindowController {
     private var keyboardHint: String {
         let esc = request.isBackground ? "Esc 在终端打开" : "Esc 转回终端"
         switch request.kind {
-        case .permission: return "⌘↩ 允许执行 · \(esc)"
-        case .plan: return "⌘↩ 批准计划 · \(esc)"
-        case .question: return "⌘↩ 提交回答 · \(esc)"
+        case .permission: return "点击卡片后可用 · ⌘↩ 允许 · \(esc)"
+        case .plan: return "点击卡片后可用 · ⌘↩ 批准 · \(esc)"
+        case .question: return "点击卡片后可用 · ⌘↩ 提交 · \(esc)"
         }
     }
 
@@ -643,7 +643,9 @@ final class RequestPanelController: NSWindowController {
     @objc private func submitTapped() {
         var answers: [String: String] = [:]
         for (index, question) in request.questions.enumerated() {
-            let selected = Array(selections[index] ?? []).sorted()
+            // 按选项原始顺序拼接，避免按字母排序后答案顺序和界面不一致。
+            let chosen = selections[index] ?? []
+            let selected = question.options.map(\.label).filter { chosen.contains($0) }
             let typed = freeTextFields[index]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let answer = typed.isEmpty ? selected.joined(separator: ", ") : typed
             guard !answer.isEmpty else {

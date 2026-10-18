@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 final class MenuBarController {
     private let statusItem: NSStatusItem
@@ -333,7 +334,9 @@ final class StatusViewController: NSViewController {
             status: task.state.label,
             onClick: { [weak self] in self?.open(task) }
         )
-        row.toolTip = "\(task.cwd)\n点击进入任务；进入后按 ← 返回 agents 列表"
+        row.toolTip = task.pending
+            ? "\(task.cwd)\n点击召回这张确认卡"
+            : "\(task.cwd)\n点击进入任务；进入后按 ← 返回 agents 列表"
         return row
     }
 
@@ -369,17 +372,29 @@ final class StatusViewController: NSViewController {
         refresh.font = .systemFont(ofSize: 11)
         refresh.translatesAutoresizingMaskIntoConstraints = false
 
+        let launch = NSButton(
+            checkboxWithTitle: "登录时启动",
+            target: self,
+            action: #selector(launchAtLoginToggled(_:))
+        )
+        launch.font = .systemFont(ofSize: 10.5)
+        launch.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        launch.translatesAutoresizingMaskIntoConstraints = false
+
         let quit = NSButton(title: "退出", target: self, action: #selector(quitTapped))
         quit.bezelStyle = .inline
         quit.font = .systemFont(ofSize: 11)
         quit.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(refresh)
+        container.addSubview(launch)
         container.addSubview(quit)
         NSLayoutConstraint.activate([
             refresh.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
             refresh.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
             refresh.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+            launch.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            launch.centerYAnchor.constraint(equalTo: refresh.centerYAnchor),
             quit.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
             quit.centerYAnchor.constraint(equalTo: refresh.centerYAnchor)
         ])
@@ -398,9 +413,25 @@ final class StatusViewController: NSViewController {
         NSApp.terminate(nil)
     }
 
+    @objc private func launchAtLoginToggled(_ sender: NSButton) {
+        do {
+            if sender.state == .on {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            // 注册失败时把开关恢复原状，避免 UI 状态与真实状态不一致。
+            sender.state = sender.state == .on ? .off : .on
+            NSSound.beep()
+            pulseLog("launchAtLogin toggle failed: \(error)")
+        }
+    }
+
     private func open(_ task: TaskItem) {
         if task.pending {
-            center.focusActive()
+            // 从展开面板召回这张卡：如果它在队列里，先切过去再置顶。
+            center.focus(sessionId: task.sessionId)
             return
         }
         TerminalLauncher.openTask(attachId: task.attachId, name: task.name)

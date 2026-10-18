@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
@@ -54,11 +55,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.floatingBar?.refresh()
         }
 
+        configureLaunchAtLoginIfNeeded()
+
         // 调试/演示用：启动时直接展开状态面板
         if CommandLine.arguments.contains("--show-status") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
                 self?.menuBar?.showPopover()
             }
+        }
+    }
+
+    /// 首次从 ~/Applications 启动时默认开启登录自启；之后由状态面板里的开关控制。
+    private func configureLaunchAtLoginIfNeeded() {
+        let key = "ClaudePulseLaunchAtLoginInitialized"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+
+        let installedPath = AppConfig.home.appendingPathComponent("Applications/ClaudePulse.app").path
+        guard Bundle.main.bundlePath == installedPath else { return }
+        if SMAppService.mainApp.status == .notRegistered {
+            try? SMAppService.mainApp.register()
         }
     }
 

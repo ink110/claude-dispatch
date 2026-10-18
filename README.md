@@ -31,11 +31,10 @@ cd ~/Desktop/claude-pulse
 脚本会：
 
 1. 编译 App 并装到 `~/Applications/ClaudePulse.app`
-2. 生成随机 token（`~/.claude-pulse/token`，权限 600）
-3. 备份 `~/.claude/settings.json`，再幂等写入 hooks
-4. 启动 App
+2. 调用 `ClaudePulse --install-hooks`：生成随机 token（`~/.claude-pulse/token`，权限 600）、备份 `~/.claude/settings.json`、幂等写入 hooks
+3. 启动 App；首次从 `~/Applications` 启动会默认开启「登录时启动」
 
-要求：macOS 14+、Xcode Command Line Tools（`swiftc`）。不需要 Homebrew。
+要求：macOS 14+、Xcode Command Line Tools（`swiftc`）。不需要 Homebrew 或 jq。
 
 ## 使用
 
@@ -82,7 +81,8 @@ cd ~/Desktop/claude-pulse
 
 ```
 Claude Code 会话
-  ├─ ~/.claude/sessions/<pid>.json  ──轮询──> 脉搏条 / 状态面板（会话、状态、cwd、名称）
+  ├─ claude agents --json  ──每 5 秒──> 脉搏条 / 状态面板（主数据源）
+  │    └─ 连续失败 → 降级读 ~/.claude/sessions/<pid>.json（脉搏条黄点）
   └─ hooks ──HTTP POST──> 127.0.0.1:18765 ──> 浮层 ──> 返回 allow / deny / 答案
        └─ PreToolUse / PostToolUse（mode=activity）──> 活动流（当前工具、命令摘要、最近活动）
 ```
@@ -94,18 +94,21 @@ Claude Code 会话
 | `PermissionRequest` | 权限确认、计划批准；浮层阻塞等待你的选择 |
 | `PreToolUse`（`AskUserQuestion`） | 回答问题，返回 `updatedInput.answers` |
 | `PreToolUse` / `PostToolUse`（`*`，`mode=activity`） | 记录「正在做什么」，只记录、不决策，2 秒超时 |
-| `Stop` | 任务完成轻提示 |
+| `Stop` | 一轮回复结束；只更新活动，不弹提示 |
 | `Notification`（`idle_prompt` / `agent_needs_input`） | 等你输入时提示 |
-| `SessionStart` / `SessionEnd` | 触发状态刷新 |
+| `Notification`（`agent_completed`） | 后台任务真正完成时弹轻提示 |
+| `SessionStart` / `SessionEnd` | 刷新状态；SessionEnd 进入「最近完成」列表（保留 10 分钟） |
 
 活动流与决策使用不同的 URL（`mode=activity`），避免同一个事件被处理两次。
 
 设计约束：
 
 - 服务只绑定 `127.0.0.1`，每个请求校验 token。
-- App 未启动、超时（默认 600 秒）或返回非 2xx 时，Claude Code 自动回落到终端原生确认，不会吞掉请求。
 - 不会静默批准任何操作；「以后都允许」也必须由你点击。
-- 不读取对话内容；状态来自 Claude Code 自己维护的会话注册表。
+- 不读取对话内容；状态优先来自官方 `claude agents --json`，注册表只做降级。
+- **交互式会话**：App 未启动、超时（默认 600 秒）或返回非 2xx 时，Claude Code 自动回落到终端原生确认。
+- **后台会话**：没有可回落的终端，卡片永不自动超时；显示「在终端打开」，点击后先释放 hook 再 `claude attach`，不会把任务静默拒绝。
+- 多个请求同时到达时只显示一张卡，头部 chips 可切换；每个请求保留自己的已填内容。
 
 ## 常见问题
 
@@ -128,10 +131,17 @@ cc-switch 可能重写 `~/.claude/settings.json`，把 hooks 清掉。脉搏条�
 CLAUDE_PULSE_TIMEOUT=120 ~/Applications/ClaudePulse.app/Contents/MacOS/ClaudePulse
 ```
 
+## 登录自启与调试
+
+- **登录时启动**：首次从 `~/Applications` 启动会默认注册；之后可在状态面板底部用「登录时启动」开关控制。
+- **调试日志**：默认关闭。需要排障时用 `CLAUDE_PULSE_DEBUG=1` 启动 App，日志写入 `~/.claude-pulse/debug.log`，超过 1MB 自动清空。
+
 ## 开发
 
 ```bash
-./scripts/build.sh     # 编译并组装 build/ClaudePulse.app
+./scripts/build.sh          # 编译并组装 build/ClaudePulse.app
+./scripts/test-humanizer.sh # Humanizer 纯函数测试
+./scripts/smoke.sh          # curl + /status 冒烟测试（App 需在运行）
 ```
 
 源码结构见 `CLAUDE.md`。Swift + AppKit，零第三方依赖。
@@ -139,6 +149,6 @@ CLAUDE_PULSE_TIMEOUT=120 ~/Applications/ClaudePulse.app/Contents/MacOS/ClaudePul
 ## 边界
 
 - 只覆盖「工具调用需要的信息」：权限、Claude 的提问、计划批准。任务空闲时想凭空给 Claude 发一条消息，不在本工具范围内。
-- 同一时间只显示一张确认卡片，多个请求按到达顺序排队，避免多窗口干扰。
+- 同一时间只显示一张确认卡片，多个请求按到达顺序排队；卡片头部 chips 可切换，切换不丢已填内容。
 - `AskUserQuestion` 的回答格式是官方 hook 协议；DeepSeek 模型是否调用这个工具取决于它自己的行为。
 - **计划批准是尽力而为**：当前 Claude Code 版本里，`ExitPlanMode` 的确认有时由终端 TUI 自己处理（「Ready to code?」），不经过 hook；这种情况下仍回落到终端，浮层不会出现。权限确认和提问不受影响。本工具已经注册了官方的 `PreToolUse → ExitPlanMode` 钩子，在会走 hook 的版本/模式里可直接在浮层批准。

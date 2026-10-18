@@ -68,6 +68,17 @@ final class RequestCenter {
         active.flatMap { panels[$0.id] }?.raiseToFront()
     }
 
+    /// 从展开面板召回某个会话的确认卡：若在队列里，先切过去再置顶。
+    func focus(sessionId: String) {
+        if let active, active.sessionId == sessionId {
+            focusActive()
+            return
+        }
+        guard let request = queue.first(where: { $0.sessionId == sessionId }) else { return }
+        switchTo(id: request.id)
+        focusActive()
+    }
+
     var pendingSessionIds: Set<String> {
         var ids = Set(queue.map(\.sessionId))
         if let active { ids.insert(active.sessionId) }
@@ -249,6 +260,7 @@ final class RequestCenter {
             }
         }
 
+        pulseLog("enqueue kind=\(kind.rawValue) session=\(sessionId) bg=\(isBackground) pending=\(pendingCount)")
         scheduleTimeout(for: request)
         scheduleEscalation(for: request)
         rebuildSnapshot()
@@ -327,6 +339,7 @@ final class RequestCenter {
     private func switchTo(id: String) {
         guard active?.id != id else { return }
         guard let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        pulseLog("switch to \(id)")
         let target = queue.remove(at: index)
         if let current = active {
             queue.insert(current, at: 0)
@@ -433,6 +446,7 @@ final class RequestCenter {
         guard !settledIds.contains(request.id) else { return }
         settledIds.insert(request.id)
         cancelTimers(for: request.id)
+        pulseLog("settle kind=\(request.kind.rawValue) session=\(request.sessionId)")
 
         var body: [String: Any]?
         var success = true

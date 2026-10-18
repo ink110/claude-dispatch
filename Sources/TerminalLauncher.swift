@@ -70,17 +70,7 @@ enum TerminalLauncher {
     }
 
     private static func debugLog(_ message: String) {
-        let url = AppConfig.stateDir.appendingPathComponent("debug.log")
-        let line = "\(Date()) \(message)\n"
-        guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: url.path),
-           let handle = try? FileHandle(forWritingTo: url) {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            handle.closeFile()
-        } else {
-            try? data.write(to: url)
-        }
+        pulseLog("terminal: \(message)")
     }
 
     /// 找到正在运行 `claude agents` 的 tty，用于复用同一个 Terminal 窗口。
