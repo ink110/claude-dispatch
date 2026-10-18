@@ -146,6 +146,11 @@ final class SessionStore {
 
     func refresh() {
         if pruneCompleted() { onChange?() }
+        // 截图/演示用：只展示演示数据，不混入本机真实会话。
+        if ProcessInfo.processInfo.environment["CLAUDE_DISPATCH_DEMO_AGENTS"] != nil {
+            update([])
+            return
+        }
         let dir = AppConfig.home.appendingPathComponent(".claude/sessions")
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {

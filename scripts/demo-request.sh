@@ -68,9 +68,9 @@ case "$MODE" in
           header: ("问题 \(. + 1)"),
           multiSelect: false,
           options: [
-            {label: "选项 A：继续按当前方案推进", detail: "保留现有设计，不再改动"},
-            {label: "选项 B：先补充信息再继续", detail: "需要更多上下文才能判断"},
-            {label: "选项 C：暂停这个任务", detail: "稍后再回来处理"}
+            {label: "选项 A：继续按当前方案推进", description: "保留现有设计，不再改动"},
+            {label: "选项 B：先补充信息再继续", description: "需要更多上下文才能判断"},
+            {label: "选项 C：暂停这个任务", description: "稍后再回来处理"}
           ]
         }]
       }

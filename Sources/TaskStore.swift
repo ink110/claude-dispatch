@@ -130,6 +130,13 @@ final class TaskStore {
     }
 
     private static func fetch(path: String) -> [AgentListItem]? {
+        // 截图/演示用：直接读固定的 agents 列表，不依赖本机真实会话。
+        if let demo = ProcessInfo.processInfo.environment["CLAUDE_DISPATCH_DEMO_AGENTS"],
+           let data = FileManager.default.contents(atPath: demo),
+           let items = try? JSONDecoder().decode([AgentListItem].self, from: data) {
+            return items
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = ["agents", "--json"]

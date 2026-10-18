@@ -2,7 +2,7 @@
 
 macOS 菜单栏 + 悬浮确认面板，用于观测多个 Claude Code CLI 会话，并在任务需要确认时主动提醒、直接在浮层里批复或补充信息。
 
-公开版本：v1.0.0，MIT 许可证，仓库名 `claude-dispatch`；分发形态为通用二进制 `.app` + zip（ad-hoc 签名，不公证）。
+公开版本：v1.1.0，MIT 许可证，仓库名 `claude-dispatch`；分发形态为通用二进制 `.app` + zip（ad-hoc 签名，不公证）。
 
 ## 核心约定
 
@@ -51,7 +51,7 @@ claude-dispatch/
     test-humanizer.sh    Humanizer 纯函数测试（复合命令/进程/敏感路径）
     smoke.sh             curl + /status 冒烟测试（不合成鼠标点击）
     demo-request.sh      注入合成确认卡（长问题/长计划/多步权限）
-  docs/                  README 截图
+  docs/                  README 截图（状态条各状态、状态面板、三类确认卡、首次引导）
   build/                 构建产物（不提交）
   dist/                  发布包（不提交）
 ```
@@ -103,6 +103,7 @@ claude-dispatch/
 - 长内容：`./scripts/demo-request.sh --questions 20`，截图确认正文滚动、底部按钮固定；`--permission --steps 5` 验证多行 footer。
 - 首次启动：`open -n build/ClaudeDispatch.app --args --show-onboarding`，截图确认引导窗口与 hook 状态。
 - 悬浮状态面板：`CLAUDE_DISPATCH_SHOW_FLOATING_STATUS=1 build/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch`，截图确认真圆角、无描边、状态图标 18pt。
+- 截图/文档数据：`CLAUDE_DISPATCH_DEMO_AGENTS=<agents.json> CLAUDE_DISPATCH_SHOW_FLOATING_STATUS=1 build/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch`，用固定演示会话展示各状态，不读取本机真实会话。锁屏时 `screencapture -l <windowid> -o` 仍可截取单个窗口。
 - 打包：`./scripts/package.sh`，检查 zip 只含 `.app`、无备份/token，并记录 SHA-256。
 - 卸载：`./scripts/uninstall.sh`（无 jq 依赖，走 `--uninstall-hooks`）
 - 提醒内容验收：权限卡默认不出现大段代码；中文摘要、影响说明、动作按钮齐全；「查看完整命令」能展开且不误触允许。

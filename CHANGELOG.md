@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-10-18
+
+### Added
+
+- The README now includes an interface tour with screenshots of the status bar states, the session panel, all three request cards, and first-run onboarding.
+- Screenshot mode (`CLAUDE_DISPATCH_DEMO_AGENTS`) renders the interface from a fixed demo dataset without reading real local sessions.
 
 ### Changed
 

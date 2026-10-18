@@ -8,8 +8,6 @@ Runs entirely on your Mac. No network calls, no telemetry. It does not require a
 
 ![Permission request card](docs/request-card.png)
 
-> The app UI is currently in Chinese. This English README documents installation and behavior; localization is planned.
-
 ## What it solves
 
 When you run several Claude Code tasks at the same time:
@@ -18,17 +16,82 @@ When you run several Claude Code tasks at the same time:
 2. Claude asks a question and you have to find that terminal window again.
 3. You want to know how many tasks are running and which one is waiting for you.
 
-Claude Dispatch gives you:
+Claude Dispatch does that with one always-visible status bar, a session panel, and three kinds of request cards. New here? The tour below shows every state and every panel in about three minutes.
 
-- **Always-visible status bar**: shows how many tasks are running and how many requests are waiting. Draggable, visible on every Space and full-screen app.
-- **Status panel**: hover or click the bar to list sessions grouped by "needs you / running / idle", with project path, elapsed time, and recent activity.
-- **Request panel**: handle permission requests, Claude questions, and plan approvals directly. It shows a plain-language summary first; raw commands stay behind "view technical details".
-- **Long content stays usable**: panels cap their height to the screen, the body scrolls, and the submit/allow buttons stay pinned to the bottom.
+## Interface tour
+
+### 1. The status bar
+
+The bar sits in the top-right corner of the screen (draggable, position remembered) and shows only **the single most important thing right now**. It never steals keyboard focus and stays visible on every Space and full-screen app.
+
+| State | Status bar | When it appears |
+|---|---|---|
+| Needs you | ![Needs you](docs/state-pending.png) | A permission prompt, a question, or a plan is waiting. **This is the only state that needs action**: click the bar or the card. |
+| Running | ![Running](docs/state-running.png) | At least one task is running. Nothing to do. |
+| Waiting for input | ![Waiting for input](docs/state-waiting.png) | Claude is waiting for typed input in the terminal, but the app has no card to show (for example, hooks disconnected or a background task waiting). Click the bar to find the session. |
+| Completed | ![Completed](docs/state-completed.png) | Recently finished tasks, kept for 10 minutes so you can revisit or reopen them. |
+| Idle | ![Idle](docs/state-idle.png) | Nothing is running and nothing is waiting. |
+
+Priority from top to bottom: needs you → waiting for input → possibly stuck → running → completed → idle. A small **yellow dot** means the data source is degraded (`claude agents` is unavailable and the session registry is being used as a fallback).
+
+- Hover: expand the session panel; move away to collapse.
+- Click: pin or unpin the panel.
+- Drag: move it; the position is remembered.
+- The menu bar item mirrors the state: a red bell with a count when something needs you, a waveform and the running count otherwise.
+
+### 2. Session panel (every session at a glance)
+
+Hover or click the bar to expand. Sessions are grouped by state; each row shows the project name, background/interactive kind, path, elapsed time, and recent activity.
+
+![Session panel](docs/status-panel.png)
+
+- **Needs you**: a card is queued; click the row to open its terminal.
+- **Waiting for input**: the terminal itself is waiting for typed input, but there is no card to click.
+- **Possibly stuck**: the task is busy but has produced no activity for five minutes.
+- **Running / Completed / Idle**: everything else.
+- Click any row to open its terminal session: background jobs use `claude attach`, interactive sessions focus the matching Terminal tab, finished sessions resume with `claude --resume`.
+- Footer: refresh, toggle launch at login, quit.
+
+### 3. Request cards: permissions, questions, plans
+
+All three decision points appear directly under the status bar. By default the card shows a plain-language summary of what will happen, what it affects, and what you need to decide. Raw commands stay behind "view technical details".
+
+#### Permission request
+
+![Permission request card](docs/request-card.png)
+
+- Plain-language summary and impact (install dependencies, delete files, push code, and so on).
+- "Deny" or "Allow"; click "view technical details" to inspect the raw command.
+- "Always allow this kind of operation" also requires an explicit click. Nothing is approved silently.
+
+#### Claude question
+
+![Claude question card](docs/question-card.png)
+
+- Single-select: click an option. Multi-select: check several. Each option has a short explanation.
+- You can also skip the options and type your own answer.
+- Long or multiple questions scroll; the submit button stays pinned to the bottom.
+
+#### Plan approval
+
+![Plan approval card](docs/plan-card.png)
+
+- Scroll through the plan; even long plans keep the buttons on screen.
+- Approve directly, or type feedback and request changes.
+
+#### Shared interactions
+
+- **Multiple requests queue**: one card at a time, switch with the chips at the top; switching keeps what you already typed.
+- **Keyboard**: click the card to focus it, then `⌘↩` to allow/submit, `Esc` to hand the decision back to the terminal.
+- **Back to terminal**: click "back to terminal" or press `Esc`.
 - **Escalation**: after 15 seconds the card pulses and chimes again; after 45 seconds it raises to the front and moves to the screen under your mouse. It never steals keyboard focus.
-- **Click to return to the terminal**: background jobs open with `claude attach`, live sessions focus their Terminal tab, finished sessions resume with `claude --resume`.
-- **Self-repair**: if cc-switch rewrites settings and removes the hooks, the status bar shows "click to repair".
+- **Long content**: panels cap their height to the screen, the body scrolls, and action buttons stay pinned to the bottom.
 
-![Always-visible status bar](docs/status-bar.png)
+### 4. First-run onboarding
+
+![First-run onboarding](docs/onboarding.png)
+
+The first launch installs the Claude Code hooks and checks their health. When it says reminders are enabled, you are ready. Already-running Claude Code sessions must be restarted to load the new hooks. If another tool (for example cc-switch) later rewrites `settings.json`, the status bar changes to "reminder service error · click to repair" and one click fixes it.
 
 ## Requirements
 
@@ -36,11 +99,13 @@ Claude Dispatch gives you:
 - Apple Silicon or Intel (universal binary)
 - A working installation of [Claude Code](https://claude.com/claude-code)
 
+> The app UI is currently in Chinese. This English README documents installation and behavior; localization is planned.
+
 ## Install
 
 ### Download (recommended)
 
-1. Download `ClaudeDispatch-1.0.0.zip` from [Releases](https://github.com/ink110/claude-dispatch/releases/latest).
+1. Download `ClaudeDispatch-1.1.0.zip` from [Releases](https://github.com/ink110/claude-dispatch/releases/latest).
 2. Unzip and drag `ClaudeDispatch.app` into Applications.
 3. **Right-click → Open the first time.** The app is not notarized by Apple, so a double-click is blocked by Gatekeeper.
 
@@ -50,12 +115,12 @@ Claude Dispatch gives you:
    xattr -dr com.apple.quarantine /Applications/ClaudeDispatch.app
    ```
 
-4. On first launch, click "Enable reminders" in the onboarding window. Running Claude Code sessions must be restarted to load the new hooks.
+4. On first launch, finish the onboarding window to enable reminders. Running Claude Code sessions must be restarted to load the new hooks.
 
 Verify the download with the SHA-256 file published alongside the release:
 
 ```bash
-shasum -a 256 -c ClaudeDispatch-1.0.0.zip.sha256
+shasum -a 256 -c ClaudeDispatch-1.1.0.zip.sha256
 ```
 
 ### Build from source
@@ -70,15 +135,18 @@ cd claude-dispatch
 
 `install.sh` builds a universal binary, installs it to `~/Applications/ClaudeDispatch.app`, installs the hooks (backing up `~/.claude/settings.json` first), and launches the app.
 
-## Usage
+## Quick reference
 
-- **Status bar**: orange dot = tasks running, red dot = requests waiting, yellow text = possibly stuck. Hover to expand; drag to reposition (position is remembered).
-- **Permission requests**: plain-language summary, impact, and action buttons. Click "view technical details" to inspect the raw command.
-- **Questions**: click single- or multi-select options, or type your own answer. Multiple questions and long content are supported with scrolling.
-- **Plan approval**: approve, or type feedback and request changes.
-- **Back to terminal**: click "back to terminal" or press Esc to fall back to Claude Code's native prompt.
-- **Open a task**: click any task card to open its terminal session.
-- **Launch at login**: enabled by default when first launched from an installed location; toggle it at the bottom of the status panel.
+| I want to… | Do this |
+|---|---|
+| See how many tasks are running | Look at the status bar in the top-right corner |
+| Find a session | Hover or click the bar, then click its row |
+| Handle a permission, question, or plan | Click the card, or click it once and press `⌘↩` |
+| Handle it in the terminal instead | Click "back to terminal" or press `Esc` |
+| Switch between queued requests | Click the chips at the top of the card |
+| Move the status bar | Drag it |
+| Turn off launch at login | The checkbox at the bottom of the session panel |
+| Repair broken hooks | Click the bar when it says "click to repair" |
 
 ### Automation permission (optional)
 
@@ -142,6 +210,8 @@ This removes all Claude Dispatch hooks and backs up your settings. Then move `Cl
 ./scripts/demo-request.sh   # inject a long synthetic question card
 ./scripts/package.sh        # dist/ClaudeDispatch-<version>.zip + SHA-256
 ```
+
+Screenshot/documentation mode: `CLAUDE_DISPATCH_DEMO_AGENTS=<agents.json> CLAUDE_DISPATCH_SHOW_FLOATING_STATUS=1 build/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch` renders the session panel from a fixed demo dataset without reading real local sessions.
 
 Swift + AppKit, no third-party dependencies. See [CLAUDE.md](CLAUDE.md) for source layout and design conventions.
 
