@@ -22,6 +22,7 @@ jq '
   if .hooks then
     .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) | strip_cp) |
     .hooks.PreToolUse = ((.hooks.PreToolUse // []) | strip_cp) |
+    .hooks.PostToolUse = ((.hooks.PostToolUse // []) | strip_cp) |
     .hooks.Stop = ((.hooks.Stop // []) | strip_cp) |
     .hooks.Notification = ((.hooks.Notification // []) | strip_cp) |
     .hooks.SessionStart = ((.hooks.SessionStart // []) | strip_cp) |

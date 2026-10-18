@@ -1,24 +1,36 @@
 import AppKit
+import QuartzCore
 
 /// 等待用户处理的浮层：权限确认、Claude 提问、计划批准。
+/// 默认只显示中文描述和需要你做的动作；原始命令收在「查看技术细节」里。
 /// 非激活面板，不抢终端焦点；点击后才进入输入状态。
 final class RequestPanelController: NSWindowController {
     private let request: PendingRequest
     private let queueRemaining: Int
+    private let anchor: NSRect?
     private let onAction: (UserAction) -> Void
 
     private var selections: [Int: Set<String>] = [:]
     private var optionButtons: [Int: [NSButton]] = [:]
     private var freeTextFields: [Int: NSTextField] = [:]
     private var planFeedbackField: NSTextField?
+    private var rawContainer: NSView?
+    private var rawButton: NSButton?
     private var rootStack: NSStackView!
+    private var isShowingRaw = false
 
-    init(request: PendingRequest, queueRemaining: Int, onAction: @escaping (UserAction) -> Void) {
+    init(
+        request: PendingRequest,
+        queueRemaining: Int,
+        anchor: NSRect?,
+        onAction: @escaping (UserAction) -> Void
+    ) {
         self.request = request
         self.queueRemaining = queueRemaining
+        self.anchor = anchor
         self.onAction = onAction
 
-        let panel = NSPanel(
+        let panel = PulsePanel(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 220),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered,
@@ -30,8 +42,9 @@ final class RequestPanelController: NSWindowController {
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        panel.becomesKeyOnlyIfNeeded = true
-        panel.isMovableByWindowBackground = true
+        // 确认卡上的按钮必须能用真实鼠标点中；固定在锚点位置，不靠拖动背景移动。
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.isMovableByWindowBackground = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
 
         super.init(window: panel)
@@ -43,9 +56,47 @@ final class RequestPanelController: NSWindowController {
 
     func show() {
         guard let panel = window as? NSPanel else { return }
+        rootStack.layoutSubtreeIfNeeded()
         panel.setContentSize(NSSize(width: 440, height: rootStack.fittingSize.height + 32))
         position(panel)
         panel.orderFrontRegardless()
+    }
+
+    // MARK: - 提醒升级
+
+    func escalatePulse() {
+        guard let view = window?.contentView else { return }
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 16
+        view.layer?.borderWidth = 2
+        view.layer?.borderColor = NSColor.systemRed.cgColor
+
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = 1.0
+        animation.toValue = 0.55
+        animation.duration = 0.35
+        animation.autoreverses = true
+        animation.repeatCount = 3
+        view.layer?.add(animation, forKey: "claudePulse")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak view] in
+            view?.layer?.borderWidth = 0
+        }
+    }
+
+    func raiseToFront() {
+        window?.level = .statusBar
+        window?.orderFrontRegardless()
+    }
+
+    func moveToScreenUnderMouse() {
+        guard let panel = window as? NSPanel, let screen = screenUnderMouse() else { return }
+        let frame = screen.visibleFrame
+        let size = panel.frame.size
+        panel.setFrameOrigin(NSPoint(
+            x: frame.maxX - size.width - 18,
+            y: frame.maxY - size.height - 18
+        ))
     }
 
     // MARK: - 构建界面
@@ -100,15 +151,29 @@ final class RequestPanelController: NSWindowController {
         row.spacing = 8
         row.translatesAutoresizingMaskIntoConstraints = false
 
-        let (title, color, symbol): (String, NSColor, String) = {
+        let color: NSColor = {
             switch request.kind {
             case .permission:
-                let risky = isRisky(request.detailText)
-                return (risky ? "高风险操作，需要确认" : "需要你确认", risky ? .systemRed : .systemOrange, risky ? "exclamationmark.triangle.fill" : "lock.shield.fill")
+                switch request.human.risk {
+                case .high: return .systemRed
+                case .medium: return .systemOrange
+                case .low: return .systemBlue
+                }
+            case .plan, .question:
+                return .systemBlue
+            }
+        }()
+
+        let symbol: String = {
+            switch request.kind {
+            case .permission:
+                return request.human.risk == .high
+                    ? "exclamationmark.triangle.fill"
+                    : "lock.shield.fill"
             case .plan:
-                return ("计划等待批准", .systemBlue, "doc.text.fill")
+                return "doc.text.fill"
             case .question:
-                return ("Claude 有问题要问你", .systemBlue, "questionmark.bubble.fill")
+                return "questionmark.bubble.fill"
             }
         }()
 
@@ -118,7 +183,7 @@ final class RequestPanelController: NSWindowController {
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
         row.addArrangedSubview(icon)
 
-        let titleLabel = Theme.label(title, size: 13.5, weight: .semibold)
+        let titleLabel = Theme.label(request.human.title, size: 13.5, weight: .semibold)
         titleLabel.textColor = color
         row.addArrangedSubview(titleLabel)
         row.addArrangedSubview(Theme.spacer())
@@ -150,14 +215,37 @@ final class RequestPanelController: NSWindowController {
         container.alignment = .leading
         container.spacing = 8
 
-        let toolLabel = Theme.label(request.toolName.uppercased(), size: 10, weight: .semibold, color: .secondaryLabelColor)
-        container.addArrangedSubview(toolLabel)
-        container.addArrangedSubview(makeTextScroll(request.detailText, height: 110))
+        container.addArrangedSubview(makeSummary(request.human.summary))
+        container.addArrangedSubview(makeDetail(request.human.detail))
 
-        if isRisky(request.detailText) {
-            let warning = Theme.label("这条命令可能删除数据或影响远程仓库，请逐字核对。", size: 10.5, color: .systemRed)
-            container.addArrangedSubview(warning)
+        let actionColor: NSColor = request.human.risk == .high ? .systemRed : .controlAccentColor
+        container.addArrangedSubview(makeDetail(request.human.action, color: actionColor, weight: .medium))
+
+        if request.human.risk == .high {
+            container.addArrangedSubview(
+                makeDetail("请确认目标无误，再决定是否允许。", color: .systemRed, size: 10.5)
+            )
         }
+
+        if !request.human.rawDetail.isEmpty {
+            let button = NSButton(
+                title: request.human.rawLabel.isEmpty ? "查看技术细节" : request.human.rawLabel,
+                target: self,
+                action: #selector(toggleRawTapped(_:))
+            )
+            button.isBordered = false
+            button.contentTintColor = .secondaryLabelColor
+            button.font = .systemFont(ofSize: 10.5)
+            button.alignment = .left
+            container.addArrangedSubview(button)
+            rawButton = button
+
+            let raw = makeTextScroll(request.human.rawDetail, height: 90)
+            raw.isHidden = true
+            container.addArrangedSubview(raw)
+            rawContainer = raw
+        }
+
         return container
     }
 
@@ -167,6 +255,9 @@ final class RequestPanelController: NSWindowController {
         container.alignment = .leading
         container.spacing = 8
 
+        container.addArrangedSubview(makeSummary(request.human.summary))
+        container.addArrangedSubview(makeDetail(request.human.detail))
+        container.addArrangedSubview(makeDetail(request.human.action, color: .controlAccentColor, weight: .medium))
         container.addArrangedSubview(makeTextScroll(request.detailText, height: 230))
 
         let field = NSTextField()
@@ -187,11 +278,17 @@ final class RequestPanelController: NSWindowController {
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
 
+        stack.addArrangedSubview(makeSummary(request.human.summary))
+        stack.addArrangedSubview(makeDetail(request.human.detail))
+        stack.addArrangedSubview(makeDetail(request.human.action, color: .controlAccentColor, weight: .medium))
+
         for (index, question) in request.questions.enumerated() {
             if index > 0 { stack.addArrangedSubview(makeDivider()) }
 
             if !question.header.isEmpty {
-                stack.addArrangedSubview(Theme.label(question.header.uppercased(), size: 10, weight: .semibold, color: .secondaryLabelColor))
+                stack.addArrangedSubview(
+                    Theme.label(question.header.uppercased(), size: 10, weight: .semibold, color: .secondaryLabelColor)
+                )
             }
             let questionLabel = Theme.multilineLabel(question.question, size: 13, weight: .medium)
             questionLabel.preferredMaxLayoutWidth = 404
@@ -233,9 +330,25 @@ final class RequestPanelController: NSWindowController {
             freeTextFields[index] = field
         }
 
-        stack.translatesAutoresizingMaskIntoConstraints = false
         stack.widthAnchor.constraint(equalToConstant: 404).isActive = true
         return stack
+    }
+
+    private func makeSummary(_ text: String) -> NSTextField {
+        let label = Theme.multilineLabel(text, size: 14, weight: .semibold)
+        label.preferredMaxLayoutWidth = 404
+        return label
+    }
+
+    private func makeDetail(
+        _ text: String,
+        color: NSColor = .secondaryLabelColor,
+        size: CGFloat = 11.5,
+        weight: NSFont.Weight = .regular
+    ) -> NSTextField {
+        let label = Theme.multilineLabel(text, size: size, weight: weight, color: color)
+        label.preferredMaxLayoutWidth = 404
+        return label
     }
 
     private func makeFooter() -> NSView {
@@ -258,14 +371,14 @@ final class RequestPanelController: NSWindowController {
                 always.tag = 9001
             }
             row.addArrangedSubview(makeButton("拒绝", action: #selector(denyTapped), primary: false))
-            let allow = makeButton("允许", action: #selector(allowTapped), primary: true)
+            let allow = makeButton("允许执行", action: #selector(allowTapped), primary: true)
             allow.keyEquivalent = "\r"
             allow.keyEquivalentModifierMask = [.command]
             row.addArrangedSubview(allow)
 
         case .plan:
             row.addArrangedSubview(makeButton("要求修改", action: #selector(reviseTapped), primary: false))
-            let approve = makeButton("批准", action: #selector(allowTapped), primary: true)
+            let approve = makeButton("批准计划", action: #selector(allowTapped), primary: true)
             approve.keyEquivalent = "\r"
             approve.keyEquivalentModifierMask = [.command]
             row.addArrangedSubview(approve)
@@ -280,12 +393,15 @@ final class RequestPanelController: NSWindowController {
     }
 
     private var keyboardHint: String {
-        request.kind == .question ? "⌘↩ 提交 · Esc 转回终端" : "⌘↩ 允许 · Esc 转回终端"
+        switch request.kind {
+        case .permission: return "⌘↩ 允许执行 · Esc 转回终端"
+        case .plan: return "⌘↩ 批准计划 · Esc 转回终端"
+        case .question: return "⌘↩ 提交回答 · Esc 转回终端"
+        }
     }
 
     private func makeButton(_ title: String, action: Selector, primary: Bool) -> NSButton {
-        let button = PillButton(title: title, primary: primary, target: self, action: action)
-        return button
+        PillButton(title: title, primary: primary, target: self, action: action)
     }
 
     private func makeTextScroll(_ text: String, height: CGFloat) -> NSScrollView {
@@ -329,17 +445,56 @@ final class RequestPanelController: NSWindowController {
         return view
     }
 
-    private func position(_ panel: NSPanel) {
-        guard let screen = NSScreen.main else { return }
-        let frame = screen.visibleFrame
-        let size = panel.frame.size
-        panel.setFrameOrigin(NSPoint(x: frame.maxX - size.width - 18, y: frame.maxY - size.height - 18))
+    /// 展开技术细节时保持顶部不动、向下生长，避免按钮跳到鼠标下面造成误点。
+    private func resizeKeepingTop() {
+        guard let panel = window as? NSPanel else { return }
+        rootStack.layoutSubtreeIfNeeded()
+        let top = panel.frame.maxY
+        panel.setContentSize(NSSize(width: 440, height: rootStack.fittingSize.height + 32))
+
+        var origin = NSPoint(x: panel.frame.origin.x, y: top - panel.frame.height)
+        if let screen = screenForAnchor() ?? screenUnderMouse() ?? NSScreen.main {
+            let frame = screen.visibleFrame
+            if origin.y < frame.minY + 18 {
+                origin.y = frame.minY + 18
+            }
+        }
+        panel.setFrameOrigin(origin)
     }
 
-    private func isRisky(_ command: String) -> Bool {
-        let patterns = ["rm -rf", "rm -r ", "sudo ", "git push --force", "git reset --hard", "mkfs", "dd if=", ":(){", "truncate "]
-        let lower = command.lowercased()
-        return patterns.contains { lower.contains($0) }
+    private func position(_ panel: NSPanel) {
+        let screen = screenForAnchor() ?? screenUnderMouse() ?? NSScreen.main
+        guard let screenFrame = screen?.visibleFrame else { return }
+        let size = panel.frame.size
+        var origin: NSPoint
+
+        if let anchor {
+            let anchorFrame = NSScreen.screens.first { $0.frame.intersects(anchor) }?.visibleFrame ?? screenFrame
+            origin = NSPoint(
+                x: min(anchor.maxX - size.width, anchorFrame.maxX - size.width - 18),
+                y: anchor.minY - size.height - 10
+            )
+            if origin.y < anchorFrame.minY + 18 {
+                origin.y = anchorFrame.maxY - size.height - 18
+            }
+        } else {
+            origin = NSPoint(
+                x: screenFrame.maxX - size.width - 18,
+                y: screenFrame.maxY - size.height - 18
+            )
+        }
+
+        panel.setFrameOrigin(origin)
+    }
+
+    private func screenForAnchor() -> NSScreen? {
+        guard let anchor else { return nil }
+        return NSScreen.screens.first { $0.frame.intersects(anchor) }
+    }
+
+    private func screenUnderMouse() -> NSScreen? {
+        let point = NSEvent.mouseLocation
+        return NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
     }
 
     // MARK: - 交互
@@ -380,8 +535,8 @@ final class RequestPanelController: NSWindowController {
     }
 
     @objc private func reviseTapped() {
-        let feedback = planFeedbackField?.stringValue ?? ""
-        onAction(.deny(message: feedback.isEmpty ? "请根据我的批注修改计划" : feedback))
+        let feedback = planFeedbackField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        onAction(.deny(message: feedback.isEmpty ? "请先不要执行，说明修改思路后再继续。" : feedback))
         close()
     }
 
@@ -390,7 +545,7 @@ final class RequestPanelController: NSWindowController {
         for (index, question) in request.questions.enumerated() {
             let selected = Array(selections[index] ?? []).sorted()
             let typed = freeTextFields[index]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let answer = selected.isEmpty ? typed : selected.joined(separator: ", ")
+            let answer = typed.isEmpty ? selected.joined(separator: "、") : typed
             guard !answer.isEmpty else {
                 NSSound.beep()
                 freeTextFields[index]?.becomeFirstResponder()
@@ -401,6 +556,15 @@ final class RequestPanelController: NSWindowController {
         }
         onAction(.answer(answers))
         close()
+    }
+
+    @objc private func toggleRawTapped(_ sender: NSButton) {
+        isShowingRaw.toggle()
+        rawContainer?.isHidden = !isShowingRaw
+        sender.title = isShowingRaw
+            ? "收起技术细节"
+            : (request.human.rawLabel.isEmpty ? "查看技术细节" : request.human.rawLabel)
+        resizeKeepingTop()
     }
 
     @objc private func fallbackTapped() {
@@ -446,6 +610,8 @@ private final class PillButton: NSButton {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
         layer?.backgroundColor = highlightColor.cgColor

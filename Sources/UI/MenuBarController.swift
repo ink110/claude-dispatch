@@ -5,13 +5,15 @@ final class MenuBarController {
     private let popover = NSPopover()
     private let store: SessionStore
     private let center: RequestCenter
+    private let agents: AgentListStore
     private let content: StatusViewController
 
-    init(store: SessionStore, center: RequestCenter) {
+    init(store: SessionStore, center: RequestCenter, agents: AgentListStore) {
         self.store = store
         self.center = center
+        self.agents = agents
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        self.content = StatusViewController(store: store, center: center)
+        self.content = StatusViewController(store: store, center: center, agents: agents)
 
         popover.behavior = .transient
         popover.animates = true
@@ -30,8 +32,13 @@ final class MenuBarController {
 
     func refresh() {
         guard let button = statusItem.button else { return }
-        let pending = center.pendingCount
-        let busy = store.sessions.filter { $0.isBusy }.count
+        let tasks = TaskBuilder.tasks(
+            agentItems: agents.items,
+            store: store,
+            pendingIds: center.pendingSessionIds
+        )
+        let pending = tasks.filter { $0.state == .needsInput }.count
+        let busy = tasks.filter { $0.state == .running }.count
 
         if pending > 0 {
             button.image = NSImage(systemSymbolName: "bell.badge.fill", accessibilityDescription: "有任务等你处理")
@@ -41,7 +48,6 @@ final class MenuBarController {
         } else {
             button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Claude Pulse")
             button.image?.isTemplate = true
-            // 无待确认时，用运行中数量做弱提示；全部空闲则只留图标。
             if busy > 0 {
                 button.contentTintColor = .systemOrange
                 button.title = " \(busy)"
@@ -77,12 +83,14 @@ final class MenuBarController {
 final class StatusViewController: NSViewController {
     private let store: SessionStore
     private let center: RequestCenter
+    private let agents: AgentListStore
     private let stack = NSStackView()
     private let scroll = NSScrollView()
 
-    init(store: SessionStore, center: RequestCenter) {
+    init(store: SessionStore, center: RequestCenter, agents: AgentListStore) {
         self.store = store
         self.center = center
+        self.agents = agents
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -94,6 +102,11 @@ final class StatusViewController: NSViewController {
         effect.material = .popover
         effect.blendingMode = .behindWindow
         effect.state = .active
+        effect.wantsLayer = true
+        effect.layer?.cornerRadius = 14
+        effect.layer?.masksToBounds = true
+        effect.layer?.borderWidth = 1
+        effect.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor
         view = effect
     }
 
@@ -140,34 +153,48 @@ final class StatusViewController: NSViewController {
             subview.removeFromSuperview()
         }
 
-        let pending = center.activeRequest
-        let queued = center.queuedRequests
-        let sessions = store.sessions
-        let pendingIds = center.pendingSessionIds
+        let tasks = TaskBuilder.tasks(
+            agentItems: agents.items,
+            store: store,
+            pendingIds: center.pendingSessionIds
+        )
+        let needs = tasks.filter { $0.state == .needsInput }
+        let stale = tasks.filter { $0.state == .stale }
+        let running = tasks.filter { $0.state == .running }
+        let completed = tasks.filter { $0.state == .completed }
+        let idle = tasks.filter { $0.state == .idle }
 
-        stack.addArrangedSubview(header(total: sessions.count, pending: center.pendingCount))
+        stack.addArrangedSubview(header(
+            needs: needs.count,
+            stale: stale.count,
+            running: running.count,
+            completed: completed.count,
+            idle: idle.count
+        ))
+        stack.addArrangedSubview(hintRow())
 
-        if let pending {
-            stack.addArrangedSubview(sectionTitle("需要你处理"))
-            stack.addArrangedSubview(requestRow(pending, extra: queued.count))
-            for item in queued {
-                stack.addArrangedSubview(requestRow(item, extra: nil))
-            }
+        if !needs.isEmpty {
+            stack.addArrangedSubview(sectionTitle("等你处理", count: needs.count))
+            for task in needs { stack.addArrangedSubview(taskRow(task)) }
         }
-
-        let busy = sessions.filter { !pendingIds.contains($0.sessionId) && $0.isBusy }
-        let idle = sessions.filter { !pendingIds.contains($0.sessionId) && !$0.isBusy }
-
-        if !busy.isEmpty {
-            stack.addArrangedSubview(sectionTitle("运行中"))
-            for session in busy { stack.addArrangedSubview(sessionRow(session, pending: false)) }
+        if !stale.isEmpty {
+            stack.addArrangedSubview(sectionTitle("可能卡住", count: stale.count))
+            for task in stale { stack.addArrangedSubview(taskRow(task)) }
+        }
+        if !running.isEmpty {
+            stack.addArrangedSubview(sectionTitle("运行中", count: running.count))
+            for task in running { stack.addArrangedSubview(taskRow(task)) }
+        }
+        if !completed.isEmpty {
+            stack.addArrangedSubview(sectionTitle("已完成", count: completed.count))
+            for task in completed { stack.addArrangedSubview(taskRow(task)) }
         }
         if !idle.isEmpty {
-            stack.addArrangedSubview(sectionTitle("空闲"))
-            for session in idle { stack.addArrangedSubview(sessionRow(session, pending: false)) }
+            stack.addArrangedSubview(sectionTitle("空闲", count: idle.count))
+            for task in idle { stack.addArrangedSubview(taskRow(task)) }
         }
 
-        if sessions.isEmpty && pending == nil {
+        if tasks.isEmpty {
             stack.addArrangedSubview(emptyState())
         }
 
@@ -178,7 +205,7 @@ final class StatusViewController: NSViewController {
         view.layoutSubtreeIfNeeded()
 
         let contentHeight = stack.fittingSize.height
-        let height = min(max(contentHeight, 180), 520)
+        let height = min(max(contentHeight, 180), 560)
         preferredContentSize = NSSize(width: 392, height: height)
         view.setFrameSize(NSSize(width: 392, height: height))
         view.layoutSubtreeIfNeeded()
@@ -187,19 +214,29 @@ final class StatusViewController: NSViewController {
         scroll.reflectScrolledClipView(scroll.contentView)
     }
 
-    // MARK: 组件
+    // MARK: - 组件
 
-    private func header(total: Int, pending: Int) -> NSView {
+    private func header(needs: Int, stale: Int, running: Int, completed: Int, idle: Int) -> NSView {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.widthAnchor.constraint(equalToConstant: 392).isActive = true
 
         let title = Theme.label("Claude Pulse", size: 14, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
+
+        let subtitleText: String
+        if needs > 0 {
+            subtitleText = "\(needs) 个等你处理 · \(running) 个运行中 · \(completed) 个已完成"
+                + (stale > 0 ? " · \(stale) 个可能卡住" : "")
+        } else if stale > 0 {
+            subtitleText = "\(stale) 个可能卡住 · \(running) 个运行中 · \(completed) 个已完成"
+        } else {
+            subtitleText = "\(running) 个运行中 · \(completed) 个已完成 · \(idle) 个空闲"
+        }
         let subtitle = Theme.label(
-            pending > 0 ? "\(pending) 个请求等你处理" : "\(total) 个会话在线",
+            subtitleText,
             size: 10.5,
-            color: pending > 0 ? .systemOrange : .secondaryLabelColor
+            color: needs > 0 ? .systemRed : .secondaryLabelColor
         )
         subtitle.translatesAutoresizingMaskIntoConstraints = false
 
@@ -210,69 +247,90 @@ final class StatusViewController: NSViewController {
             title.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
             subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 2),
-            subtitle.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12)
+            subtitle.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10)
         ])
         return container
     }
 
-    private func sectionTitle(_ text: String) -> NSView {
+    private func hintRow() -> NSView {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.widthAnchor.constraint(equalToConstant: 392).isActive = true
-        let label = Theme.label(text.uppercased(), size: 9.5, weight: .semibold, color: .tertiaryLabelColor)
+
+        let hint = Theme.label(
+            "点击任务进入会话 · 进入后按 ← 返回 agents 列表",
+            size: 9.5,
+            color: .tertiaryLabelColor
+        )
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(hint)
+        NSLayoutConstraint.activate([
+            hint.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            hint.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -14),
+            hint.topAnchor.constraint(equalTo: container.topAnchor),
+            hint.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6)
+        ])
+        return container
+    }
+
+    private func sectionTitle(_ text: String, count: Int) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.widthAnchor.constraint(equalToConstant: 392).isActive = true
+        let label = Theme.label(
+            "\(text) · \(count)",
+            size: 9.5,
+            weight: .semibold,
+            color: .tertiaryLabelColor
+        )
         label.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(label)
         NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -5)
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -4)
         ])
         return container
     }
 
-    private func sessionRow(_ session: SessionRecord, pending: Bool) -> NSView {
-        let statusText: String
-        let color: NSColor
-        if pending {
-            statusText = "等你确认"; color = .systemRed
-        } else if session.isWaiting {
-            statusText = "等待输入"; color = .systemRed
-        } else if session.isBusy {
-            statusText = "运行中"; color = .systemOrange
-        } else {
-            statusText = "空闲"; color = .tertiaryLabelColor
-        }
-
-        let detailParts = [
-            session.isBackground ? "后台" : "终端",
-            Theme.shortPath(session.cwd)
+    private func taskRow(_ task: TaskItem) -> NSView {
+        var detailParts: [String] = [
+            task.isBackground ? "后台" : "终端",
+            Theme.shortPath(task.cwd)
         ]
-        let row = ClickableRow(
-            title: session.displayName,
-            detail: detailParts.joined(separator: " · "),
-            status: statusText,
-            color: color,
-            onClick: { [weak self] in self?.jump(to: session) }
-        )
-        row.toolTip = "\(session.cwd)\n点击跳到对应终端"
-        return row
-    }
 
-    private func requestRow(_ request: PendingRequest, extra: Int?) -> NSView {
-        let kindText: String
-        switch request.kind {
-        case .permission: kindText = "权限确认 · \(request.toolName)"
-        case .question: kindText = "有问题要问你"
-        case .plan: kindText = "计划待批准"
+        if task.state == .running {
+            let start = task.startedAt ?? task.lastActivity ?? Date()
+            detailParts.append("已运行 \(Theme.elapsed(start))")
+        } else if task.state == .needsInput {
+            let waitingSince = task.lastActivity ?? task.startedAt ?? Date()
+            detailParts.append("已等待 \(Theme.elapsed(waitingSince))")
         }
-        let suffix = extra.map { $0 > 0 ? "（另有 \($0) 个）" : "" } ?? ""
+
+        let activityText: String?
+        switch task.state {
+        case .needsInput:
+            activityText = task.pending ? "点击处理" : "等待输入"
+        case .stale:
+            activityText = "可能卡住 · 最近活动 \(Theme.relativeTime(task.lastActivity ?? Date()))"
+        case .running:
+            let current = task.activityText ?? "正在运行"
+            activityText = "\(current) · 最近活动 \(Theme.relativeTime(task.lastActivity ?? Date()))"
+        case .completed:
+            activityText = "已完成 · 点击重新打开"
+        case .idle:
+            activityText = "最近活动 \(Theme.relativeTime(task.lastActivity ?? Date()))"
+        }
+
         let row = ClickableRow(
-            title: request.sessionName,
-            detail: Theme.shortPath(request.cwd) + " · " + kindText + suffix,
-            status: "待处理",
-            color: .systemRed,
-            onClick: { [weak self] in self?.center.focusActive() }
+            title: task.name,
+            detail: detailParts.joined(separator: " · "),
+            activity: activityText,
+            state: task.state,
+            status: task.state.label,
+            onClick: { [weak self] in self?.open(task) }
         )
+        row.toolTip = "\(task.cwd)\n点击进入任务；进入后按 ← 返回 agents 列表"
         return row
     }
 
@@ -325,10 +383,11 @@ final class StatusViewController: NSViewController {
         return container
     }
 
-    // MARK: 动作
+    // MARK: - 动作
 
     @objc private func refreshTapped() {
         store.refresh()
+        agents.refresh()
         refresh()
     }
 
@@ -336,33 +395,12 @@ final class StatusViewController: NSViewController {
         NSApp.terminate(nil)
     }
 
-    private func jump(to session: SessionRecord) {
-        if session.isBackground {
-            let script = """
-            tell application "Terminal"
-                activate
-                do script "claude attach \(session.shortId)"
-            end tell
-            """
-            NSAppleScript(source: script)?.executeAndReturnError(nil)
+    private func open(_ task: TaskItem) {
+        if task.pending {
+            center.focusActive()
             return
         }
-        activateTerminal()
-    }
-
-    private func activateTerminal() {
-        let bundleIDs = [
-            "com.googlecode.iterm2",
-            "com.apple.Terminal",
-            "dev.warp.Warp-Stable",
-            "com.mitchellh.ghostty"
-        ]
-        for id in bundleIDs {
-            if let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first {
-                app.activate(options: [.activateAllWindows])
-                return
-            }
-        }
+        TerminalLauncher.openTask(attachId: task.attachId, name: task.name)
     }
 }
 
@@ -374,46 +412,94 @@ private final class FlippedView: NSView {
 
 private final class ClickableRow: NSView {
     private let onClick: () -> Void
+    private let card = NSView()
     private var tracking: NSTrackingArea?
 
-    init(title: String, detail: String, status: String, color: NSColor, onClick: @escaping () -> Void) {
+    init(
+        title: String,
+        detail: String,
+        activity: String?,
+        state: TaskState,
+        status: String,
+        onClick: @escaping () -> Void
+    ) {
         self.onClick = onClick
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 392).isActive = true
 
-        let dot = Theme.dot(color: color)
+        card.wantsLayer = true
+        card.layer?.cornerRadius = 10
+        card.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.045).cgColor
+        card.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(card)
+
+        let icon = StatusIconView(size: 13)
+        icon.configure(state: state)
+
         let titleLabel = Theme.label(title, size: 12, weight: .medium)
         let detailLabel = Theme.label(detail, size: 10, color: .secondaryLabelColor)
-        let statusLabel = Theme.label(status, size: 10, weight: .medium, color: color)
+        let statusLabel = Theme.label(status, size: 10, weight: .medium, color: Self.statusColor(state))
 
-        let text = NSStackView(views: [titleLabel, detailLabel])
+        var textViews: [NSView] = [titleLabel, detailLabel]
+        if let activity, !activity.isEmpty {
+            let activityLabel = Theme.label(activity, size: 10, color: .tertiaryLabelColor)
+            activityLabel.lineBreakMode = .byTruncatingTail
+            textViews.append(activityLabel)
+        }
+
+        let text = NSStackView(views: textViews)
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 1
 
-        let row = NSStackView(views: [dot, text, Theme.spacer(), statusLabel])
+        let row = NSStackView(views: [icon, text, Theme.spacer(), statusLabel])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 10
-        row.edgeInsets = NSEdgeInsets(top: 7, left: 16, bottom: 7, right: 14)
         row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
+        card.addSubview(row)
+
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor)
+            card.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            card.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            card.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+            row.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+            row.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            row.topAnchor.constraint(equalTo: card.topAnchor, constant: 7),
+            row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -7)
         ])
+
         wantsLayer = true
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("\(title)，\(status)")
+        setAccessibilityHelp("点击进入任务；进入后按 ← 返回 agents 列表")
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func accessibilityPerformPress() -> Bool {
+        onClick()
+        return true
+    }
+
+    private static func statusColor(_ state: TaskState) -> NSColor {
+        switch state {
+        case .needsInput: return .systemRed
+        case .stale: return .systemOrange
+        case .running: return .systemBlue
+        case .completed: return .systemGreen
+        case .idle: return .tertiaryLabelColor
+        }
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard bounds.contains(point) else { return nil }
-        return self
+        self
     }
 
     override func updateTrackingAreas() {
@@ -425,11 +511,11 @@ private final class ClickableRow: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor
+        card.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.09).cgColor
     }
 
     override func mouseExited(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.clear.cgColor
+        card.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.045).cgColor
     }
 
     override func mouseDown(with event: NSEvent) {

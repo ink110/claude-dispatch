@@ -9,7 +9,11 @@ enum HookHTTPResult {
 /// 只监听 127.0.0.1 的极小 HTTP 服务，用来接收 Claude Code hooks。
 /// 每个请求都校验 token；阻塞型请求会一直保持连接，直到用户在浮层上做出选择。
 final class HookServer {
-    typealias EventHandler = ([String: Any], @escaping (HookHTTPResult) -> Void) -> Void
+    typealias EventHandler = (
+        [String: Any],
+        @escaping (HookHTTPResult) -> Void,
+        @escaping (@escaping () -> Void) -> Void
+    ) -> Void
 
     private let port: UInt16
     private let token: String
@@ -55,8 +59,12 @@ final class HookServer {
         listener = nil
     }
 
-    fileprivate func dispatch(event: [String: Any], respond: @escaping (HookHTTPResult) -> Void) {
-        onEvent(event, respond)
+    fileprivate func dispatch(
+        event: [String: Any],
+        respond: @escaping (HookHTTPResult) -> Void,
+        registerCancel: @escaping (@escaping () -> Void) -> Void
+    ) {
+        onEvent(event, respond, registerCancel)
     }
 
     fileprivate func release(_ connection: Connection) {
@@ -85,6 +93,9 @@ private final class Connection {
     private var path = ""
     private var query: [String: String] = [:]
     private var headers: [String: String] = [:]
+    private let cancelLock = NSLock()
+    private var cancelHandlers: [() -> Void] = []
+    private var disposed = false
 
     private static let headerTerminator = Data("\r\n\r\n".utf8)
 
@@ -97,7 +108,12 @@ private final class Connection {
         nw.stateUpdateHandler = { [weak self] state in
             switch state {
             case .cancelled, .failed:
-                if let self { self.server.release(self) }
+                if let self {
+                    // 客户端在回复前断开（进程退出、hook 超时、任务被停掉）：
+                    // 通知上层把这条待处理请求移除，避免留下永远点不完的幽灵弹窗。
+                    self.fireCancelIfNeeded()
+                    self.server.release(self)
+                }
             default:
                 break
             }
@@ -113,6 +129,7 @@ private final class Connection {
             self.process()
             if error == nil && !self.responded {
                 if isComplete && self.buffer.isEmpty {
+                    self.fireCancelIfNeeded()
                     self.nw.cancel()
                 } else {
                     self.receive()
@@ -134,6 +151,9 @@ private final class Connection {
 
         guard headersDone, buffer.count >= contentLength else { return }
         let body = Data(buffer.prefix(contentLength))
+        // 必须消费掉 body，否则连接关闭时 buffer 永远非空，
+        // isComplete 分支不会触发，失效请求也就不会自动清理。
+        buffer = Data(buffer.dropFirst(contentLength))
         handle(body: body)
     }
 
@@ -178,22 +198,58 @@ private final class Connection {
         }
         guard
             let object = try? JSONSerialization.jsonObject(with: body),
-            let event = object as? [String: Any]
+            var event = object as? [String: Any]
         else {
             respondJSON(status: 400, object: ["error": "invalid json"])
             return
         }
 
-        server.dispatch(event: event) { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .json(let payload):
-                self.respondJSON(status: 200, object: payload)
-            case .fail:
-                // 非 2xx 会让 hook 失效，Claude Code 自动回落到终端原生弹窗。
-                self.respondJSON(status: 500, object: ["error": "no answer; fall back to terminal"])
-            }
+        // 活动流 hook 与决策 hook 使用不同的 URL，避免同一事件被处理两次。
+        if let mode = query["mode"] {
+            event["_claude_pulse_mode"] = mode
         }
+
+        server.dispatch(
+            event: event,
+            respond: { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .json(let payload):
+                    self.respondJSON(status: 200, object: payload)
+                case .fail:
+                    // 非 2xx 会让 hook 失效，Claude Code 自动回落到终端原生弹窗。
+                    self.respondJSON(status: 500, object: ["error": "no answer; fall back to terminal"])
+                }
+            },
+            registerCancel: { [weak self] handler in
+                self?.registerCancel(handler)
+            }
+        )
+    }
+
+    private func registerCancel(_ handler: @escaping () -> Void) {
+        cancelLock.lock()
+        if disposed {
+            cancelLock.unlock()
+            handler()
+            return
+        }
+        cancelHandlers.append(handler)
+        cancelLock.unlock()
+    }
+
+    private func fireCancelIfNeeded() {
+        guard !responded else { return }
+        fireCancel()
+    }
+
+    private func fireCancel() {
+        cancelLock.lock()
+        let handlers = cancelHandlers
+        cancelHandlers.removeAll()
+        disposed = true
+        cancelLock.unlock()
+        handlers.forEach { $0() }
     }
 
     private func respondJSON(status: Int, object: [String: Any]) {

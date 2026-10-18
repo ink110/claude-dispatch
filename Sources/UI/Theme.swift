@@ -64,4 +64,18 @@ enum Theme {
         if seconds < 86400 { return "\(Int(seconds / 3600)) 小时前" }
         return "\(Int(seconds / 86400)) 天前"
     }
+
+    static func elapsed(_ date: Date) -> String {
+        let seconds = max(0, Date().timeIntervalSince(date))
+        if seconds < 60 { return "\(Int(seconds)) 秒" }
+        if seconds < 3600 { return "\(Int(seconds / 60)) 分钟" }
+        if seconds < 86400 {
+            let hours = Int(seconds / 3600)
+            let minutes = Int(seconds.truncatingRemainder(dividingBy: 3600) / 60)
+            return minutes > 0 ? "\(hours) 小时 \(minutes) 分" : "\(hours) 小时"
+        }
+        let days = Int(seconds / 86400)
+        let hours = Int(seconds.truncatingRemainder(dividingBy: 86400) / 3600)
+        return hours > 0 ? "\(days) 天 \(hours) 小时" : "\(days) 天"
+    }
 }

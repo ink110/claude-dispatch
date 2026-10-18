@@ -63,7 +63,7 @@ final class ToastPanelController {
     }
 
     private func makePanel(root: NSView) -> NSPanel {
-        let panel = NSPanel(
+        let panel = PulsePanel(
             contentRect: NSRect(x: 0, y: 0, width: 360, height: 80),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered,

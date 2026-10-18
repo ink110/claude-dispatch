@@ -50,6 +50,17 @@ struct QuestionItem {
     let multiSelect: Bool
 }
 
+/// 每个会话最近的活动，用来回答「它现在到底在干嘛」。
+struct SessionActivity {
+    var currentTool: String?
+    var currentSummary: String?
+    var currentRaw: String?
+    var lastEventAt: Date?
+    var lastEventSummary: String?
+    var needsAttention: Bool = false
+    var attentionLabel: String?
+}
+
 /// 一次等待用户处理的请求（权限 / 提问 / 计划）
 struct PendingRequest {
     let id: String
@@ -58,6 +69,9 @@ struct PendingRequest {
     let sessionName: String
     let cwd: String
     let toolName: String
+    /// 给用户看的中文描述，不直接展示原始代码。
+    let human: HumanDescription
+    /// 原始内容，只在用户主动点「查看技术细节」时展示。
     let detailText: String
     let questions: [QuestionItem]
     let hasSuggestions: Bool
@@ -75,6 +89,7 @@ struct AppConfig {
     static let home = FileManager.default.homeDirectoryForCurrentUser
     static let stateDir = home.appendingPathComponent(".claude-pulse")
     static let tokenFile = stateDir.appendingPathComponent("token")
+    static let settingsFile = home.appendingPathComponent(".claude/settings.json")
     /// 浮层无人响应后回落到终端弹窗的时间，可用环境变量覆盖。
     static var fallbackTimeout: TimeInterval {
         if let raw = ProcessInfo.processInfo.environment["CLAUDE_PULSE_TIMEOUT"],

@@ -42,8 +42,9 @@ else
 fi
 
 URL="http://127.0.0.1:${PORT}/hook?token=${TOKEN}"
+ACTIVITY_URL="http://127.0.0.1:${PORT}/hook?token=${TOKEN}&mode=activity"
 
-jq --arg url "$URL" '
+jq --arg url "$URL" --arg activity_url "$ACTIVITY_URL" '
   def strip_cp:
     map(select(([.hooks[]?.url?] | any(. != null and (contains("127.0.0.1:18765")))) | not));
 
@@ -52,7 +53,10 @@ jq --arg url "$URL" '
     + [{hooks: [{type: "http", url: $url, timeout: 3600}]}]) |
   .hooks.PreToolUse = (((.hooks.PreToolUse // []) | strip_cp)
     + [{matcher: "AskUserQuestion", hooks: [{type: "http", url: $url, timeout: 3600}]}]
-    + [{matcher: "ExitPlanMode", hooks: [{type: "http", url: $url, timeout: 3600}]}]) |
+    + [{matcher: "ExitPlanMode", hooks: [{type: "http", url: $url, timeout: 3600}]}]
+    + [{matcher: "*", hooks: [{type: "http", url: $activity_url, timeout: 2}]}]) |
+  .hooks.PostToolUse = (((.hooks.PostToolUse // []) | strip_cp)
+    + [{matcher: "*", hooks: [{type: "http", url: $activity_url, timeout: 2}]}]) |
   .hooks.Stop = (((.hooks.Stop // []) | strip_cp)
     + [{hooks: [{type: "http", url: $url, timeout: 10}]}]) |
   .hooks.Notification = (((.hooks.Notification // []) | strip_cp)

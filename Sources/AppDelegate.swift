@@ -2,16 +2,18 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
+    private let agents = AgentListStore()
     private let center = RequestCenter()
     private var server: HookServer?
     private var menuBar: MenuBarController?
+    private var floatingBar: FloatingBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             let token = try loadOrCreateToken()
-            let server = HookServer(port: AppConfig.port, token: token) { [weak self] event, respond in
+            let server = HookServer(port: AppConfig.port, token: token) { [weak self] event, respond, registerCancel in
                 DispatchQueue.main.async {
-                    self?.center.handle(event: event, respond: respond)
+                    self?.center.handle(event: event, respond: respond, registerCancel: registerCancel)
                 }
             }
             try server.start()
@@ -22,11 +24,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         store.start()
+        agents.start()
         center.store = store
-        menuBar = MenuBarController(store: store, center: center)
+        menuBar = MenuBarController(store: store, center: center, agents: agents)
+        floatingBar = FloatingBarController(store: store, center: center, agents: agents)
+        floatingBar?.start()
 
-        center.onChange = { [weak self] in self?.menuBar?.refresh() }
-        store.onChange = { [weak self] in self?.menuBar?.refresh() }
+        center.anchorProvider = { [weak self] in self?.floatingBar?.anchorRect }
+        center.onChange = { [weak self] in
+            self?.menuBar?.refresh()
+            self?.floatingBar?.refresh()
+        }
+        store.onChange = { [weak self] in
+            self?.menuBar?.refresh()
+            self?.floatingBar?.refresh()
+        }
+        agents.onChange = { [weak self] in
+            self?.menuBar?.refresh()
+            self?.floatingBar?.refresh()
+        }
 
         // 调试/演示用：启动时直接展开状态面板
         if CommandLine.arguments.contains("--show-status") {
@@ -38,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         store.stop()
+        agents.stop()
         server?.stop()
     }
 
