@@ -20,4 +20,5 @@ COPYFILE_DISABLE=1 ditto -c -k --keepParent --norsrc --noextattr \
 echo
 unzip -l "$ZIP"
 echo
-shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
+# 校验文件里只写文件名，方便用户在同一目录执行 `shasum -c`。
+(cd "$DIST" && shasum -a 256 "$(basename "$ZIP")" | tee "$(basename "$ZIP").sha256")
