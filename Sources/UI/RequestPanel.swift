@@ -216,6 +216,9 @@ final class RequestPanelController: NSWindowController {
         container.spacing = 8
 
         container.addArrangedSubview(makeSummary(request.human.summary))
+        if !request.human.segments.isEmpty {
+            container.addArrangedSubview(makeSegments(request.human.segments))
+        }
         container.addArrangedSubview(makeDetail(request.human.detail))
 
         let actionColor: NSColor = request.human.risk == .high ? .systemRed : .controlAccentColor
@@ -338,6 +341,25 @@ final class RequestPanelController: NSWindowController {
         let label = Theme.multilineLabel(text, size: 14, weight: .semibold)
         label.preferredMaxLayoutWidth = 404
         return label
+    }
+
+    /// 复合命令的逐条说明：让用户一眼看清有几步、危险动作在哪一步。
+    private func makeSegments(_ segments: [String]) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        stack.widthAnchor.constraint(equalToConstant: 404).isActive = true
+
+        stack.addArrangedSubview(
+            Theme.label("将依次执行", size: 10, weight: .semibold, color: .tertiaryLabelColor)
+        )
+        for segment in segments {
+            let label = Theme.multilineLabel(segment, size: 11.5, color: .secondaryLabelColor)
+            label.preferredMaxLayoutWidth = 404
+            stack.addArrangedSubview(label)
+        }
+        return stack
     }
 
     private func makeDetail(

@@ -19,6 +19,8 @@ struct HumanDescription {
     let risk: RiskLevel
     let rawDetail: String
     let rawLabel: String
+    /// 复合命令逐条的中文说明（「1. 删除 build」），无则空。
+    var segments: [String] = []
 }
 
 enum Humanizer {
@@ -168,19 +170,53 @@ enum Humanizer {
 
         let lower = command.lowercased()
         let compound = isCompound(lower)
-        let verb = shellVerb(lower)
-        let rawTargetSuffix = compound ? "" : (shellTarget(command).map { "「\($0)」" } ?? "")
-        let targetSuffix = showTarget(verb) ? rawTargetSuffix : ""
 
-        if let hit = highRiskHit(lower) {
-            let summary = compound
-                ? "\(hit.verb)（命令包含多步操作）"
-                : "\(hit.verb)\(rawTargetSuffix)"
-            let compoundHint = compound ? " 这条命令包含多个步骤，建议展开完整命令逐条确认。" : ""
+        // 单条命令按「真正的执行体」识别：sudo/env 前缀后的第一个词。
+        let bare = compound ? lower : bareCommand(lower)
+        let isKillCmd = bare.hasPrefix("kill") || bare.hasPrefix("pkill")
+        let isRmCmd = bare.hasPrefix("rm ") || bare.hasPrefix("rm\t")
+
+        if !compound && isKillCmd {
+            // kill/pkill 是结束进程，不是删除文件——目标只给进程名/信号，纯 PID 数字不展示。
+            let target = killTarget(command)
+            return HumanDescription(
+                title: "Claude 请求结束一个进程",
+                summary: target.map { "结束进程「\($0)」" } ?? "结束进程",
+                detail: "进程会被终止，未保存的工作可能丢失。",
+                action: "需要你决定：允许结束进程，还是拒绝？",
+                risk: bare.contains("-9") || bare.contains("sigkill") ? .high : .medium,
+                rawDetail: command,
+                rawLabel: "查看完整命令"
+            )
+        }
+
+        if !compound && isRmCmd {
+            let target = shellTarget(command)
             return HumanDescription(
                 title: "高风险操作，需要你确认",
-                summary: summary,
-                detail: "\(hit.detail) 这类操作可能造成不可恢复的后果，请确认目标无误后再决定。\(compoundHint)",
+                summary: target.map { "删除文件「\($0)」" } ?? "删除文件或目录",
+                detail: "这会删除目标文件或目录，删除后通常无法恢复，请确认目标无误后再决定。",
+                action: "需要你决定：允许删除，还是拒绝？",
+                risk: .high,
+                rawDetail: command,
+                rawLabel: "查看完整命令"
+            )
+        }
+
+        // 复合命令统一走逐条分析：高危、sudo、普通步骤都在同一张卡里说明。
+        if compound {
+            return describeCompound(command: command, lower: lower)
+        }
+
+        let verb = shellVerb(bare)
+        let rawTargetSuffix = shellTarget(command).map { "「\($0)」" } ?? ""
+        let targetSuffix = showTarget(verb) ? rawTargetSuffix : ""
+
+        if let hit = highRiskHit(bare) {
+            return HumanDescription(
+                title: "高风险操作，需要你确认",
+                summary: "\(hit.verb)\(rawTargetSuffix)",
+                detail: "\(hit.detail) 这类操作可能造成不可恢复的后果，请确认目标无误后再决定。",
                 action: "需要你决定：允许这次高风险操作，还是拒绝？",
                 risk: .high,
                 rawDetail: command,
@@ -188,10 +224,10 @@ enum Humanizer {
             )
         }
 
-        if lower.contains("sudo ") {
+        if lower.hasPrefix("sudo ") || lower.hasPrefix("sudo\t") {
             return HumanDescription(
                 title: "需要管理员权限，请确认",
-                summary: "以管理员权限\(shellVerb(lower))\(rawTargetSuffix)",
+                summary: "以管理员权限\(shellVerb(bare))\(rawTargetSuffix)",
                 detail: "该命令会以管理员权限运行，影响范围可能超出当前项目。",
                 action: "需要你决定：允许这次操作，还是拒绝？",
                 risk: .high,
@@ -200,31 +236,236 @@ enum Humanizer {
             )
         }
 
-        if compound {
-            return HumanDescription(
-                title: "Claude 请求执行一组命令",
-                summary: "执行包含多个步骤的命令",
-                detail: "这条命令包含多个步骤，展开完整命令可以逐条确认。",
-                action: "需要你决定：允许执行，还是拒绝？",
-                risk: shellRisk(lower),
-                rawDetail: command,
-                rawLabel: "查看完整命令"
-            )
-        }
-
         return HumanDescription(
             title: "Claude 请求执行一条命令",
             summary: "\(verb)\(targetSuffix)",
-            detail: shellDetail(lower),
+            detail: shellDetail(bare),
             action: "需要你决定：允许这次操作，还是拒绝？",
-            risk: shellRisk(lower),
+            risk: shellRisk(bare),
             rawDetail: command,
             rawLabel: "查看完整命令"
         )
     }
 
     private static func isCompound(_ lower: String) -> Bool {
-        lower.contains(";") || lower.contains("&&") || lower.contains("||") || lower.contains(" | ")
+        splitSegments(lower).count > 1
+    }
+
+    /// 去掉 sudo/env/time/nohup 等前缀与 VAR=val 赋值，返回真正被执行的命令行（用于动词/风险识别）。
+    static func bareCommand(_ lower: String) -> String {
+        let tokens = shellTokens(lower)
+        let prefixes = ["sudo", "env", "time", "nohup", "command"]
+        guard let index = tokens.firstIndex(where: { token in
+            !token.contains("=") && !prefixes.contains(token)
+        }) else { return lower }
+        return tokens.dropFirst(index).joined(separator: " ")
+    }
+
+    /// kill/pkill 的展示目标：进程名或信号；纯 PID 数字不展示（避免「67317」这类误报）。
+    static func killTarget(_ command: String) -> String? {
+        let tokens = shellTokens(command)
+        let prefixes = ["sudo", "env", "time", "nohup", "command"]
+        guard let cmdIndex = tokens.firstIndex(where: { token in
+            !token.contains("=") && !prefixes.contains(token)
+        }) else { return nil }
+        let cmd = (tokens[cmdIndex] as NSString).lastPathComponent
+        let args = tokens.dropFirst(cmdIndex + 1)
+
+        if cmd == "pkill" {
+            // pkill 的参数是模式（通常 -f 后的词），给一个能看懂的名字。
+            let argsArray = Array(args)
+            var pattern: String?
+            var i = 0
+            while i < argsArray.count {
+                let token = argsArray[i]
+                if token == "-f" || token == "-u" || token == "-t" {
+                    i += 2
+                    continue
+                }
+                if token.hasPrefix("-") {
+                    i += 1
+                    continue
+                }
+                pattern = token
+                break
+            }
+            return pattern.map(trimTarget)
+        }
+
+        // kill：找信号名（-9/-TERM）之外的第一个非数字参数；纯 PID 不展示。
+        let meaningful = args.filter { token in
+            if token.hasPrefix("-") { return false }
+            return !token.allSatisfy { $0.isNumber }
+        }
+        return meaningful.first.map(trimTarget)
+    }
+
+    /// 顶层拆分复合命令：只在引号外、`$()` 和反引号外按 `;` `&&` `||` `|` 拆分。
+    /// `sh -c "…"` 这类把整段脚本当参数的命令不再二次拆分。
+    static func splitSegments(_ command: String) -> [String] {
+        var segments: [String] = []
+        var current = ""
+        var quote: Character?
+        var dollarParenDepth = 0
+        var backtickDepth = 0
+        var escaped = false
+
+        func flush() {
+            let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { segments.append(trimmed) }
+            current = ""
+        }
+
+        var iterator = command.makeIterator()
+        while let ch = iterator.next() {
+            if escaped {
+                current.append(ch)
+                escaped = false
+                continue
+            }
+            if ch == "\\", quote != "'" {
+                current.append(ch)
+                escaped = true
+                continue
+            }
+            if let q = quote {
+                current.append(ch)
+                if ch == q { quote = nil }
+                continue
+            }
+            if ch == "'" || ch == "\"" {
+                quote = ch
+                current.append(ch)
+                continue
+            }
+            if ch == "$" {
+                // 预读下一个字符
+                var lookahead = iterator
+                if let next = lookahead.next(), next == "(" {
+                    dollarParenDepth += 1
+                    current.append("$(")
+                    iterator = lookahead
+                    continue
+                }
+                current.append(ch)
+                continue
+            }
+            if ch == "(" , dollarParenDepth > 0 {
+                dollarParenDepth += 1
+                current.append(ch)
+                continue
+            }
+            if ch == ")", dollarParenDepth > 0 {
+                dollarParenDepth -= 1
+                current.append(ch)
+                continue
+            }
+            if ch == "`" {
+                backtickDepth += backtickDepth == 0 ? 1 : -1
+                current.append(ch)
+                continue
+            }
+            // `|` 与 `||` 都是分隔符；单个 `&` 不是。
+            if ch == "|" {
+                var lookahead = iterator
+                if let next = lookahead.next(), next == "|" {
+                    flush()
+                    iterator = lookahead
+                    continue
+                }
+                flush()
+                continue
+            }
+            if ch == ";" {
+                flush()
+                continue
+            }
+            if ch == "&" {
+                var lookahead = iterator
+                if let next = lookahead.next(), next == "&" {
+                    flush()
+                    iterator = lookahead
+                    continue
+                }
+                current.append(ch)
+                continue
+            }
+            current.append(ch)
+        }
+        flush()
+
+        // `sh -c "多步脚本"`：整体算一步，不拆内层。
+        if segments.count > 1,
+           let first = segments.first?.lowercased(),
+           first.hasPrefix("sh -c") || first.hasPrefix("bash -c") || first.hasPrefix("zsh -c") || first.hasPrefix("dash -c") {
+            return [command.trimmingCharacters(in: .whitespacesAndNewlines)]
+        }
+        return segments
+    }
+
+    /// 复合命令的卡片：逐条分析每个步骤，任何一条高风险 → 整卡高风险。
+    private static func describeCompound(command: String, lower: String) -> HumanDescription {
+        let parts = splitSegments(command)
+        var lines: [String] = []
+        var maxRisk: RiskLevel = .low
+        var anyHighRiskHit: (verb: String, detail: String)?
+        var needsAdmin = false
+
+        for part in parts {
+            let partLower = part.lowercased()
+            if let hit = highRiskHit(partLower), anyHighRiskHit == nil {
+                anyHighRiskHit = hit
+            }
+            if shellTokens(partLower).first == "sudo" { needsAdmin = true }
+            let risk = shellRisk(partLower)
+            if risk > maxRisk { maxRisk = risk }
+            // 逐条剥离 sudo/env 前缀后再识别动作，避免把「sudo rm」当成一条普通命令。
+            let verb = shellVerb(bareCommand(partLower))
+            let target = showTarget(verb) ? shellTarget(part) : nil
+            lines.append(target.map { "\(verb)「\($0)」" } ?? verb)
+        }
+
+        // 每一步都列出来：即使某一步只能落到「执行一条命令」的兜底描述，
+        // 也要让用户看清共有几步、高危动作夹在哪一步，而不是只给一句笼统摘要。
+        let listed = lines
+        if needsAdmin { maxRisk = .high }
+        let adminHint = needsAdmin ? " 其中包含需要管理员权限的步骤，影响范围可能超出当前项目。" : ""
+
+        if let hit = anyHighRiskHit {
+            return HumanDescription(
+                title: "高风险操作，需要你确认",
+                summary: "执行 \(parts.count) 条命令，其中包含「\(hit.verb)」",
+                detail: "\(hit.detail) 建议先逐条确认步骤，再决定是否允许。\(adminHint)",
+                action: "需要你决定：允许这组命令，还是拒绝？",
+                risk: .high,
+                rawDetail: command,
+                rawLabel: "查看完整命令",
+                segments: enumerated(listed)
+            )
+        }
+
+        let summary: String
+        if listed.isEmpty {
+            summary = "执行包含 \(parts.count) 个步骤的命令"
+        } else {
+            let head = listed.prefix(3).map { $0.replacingOccurrences(of: "「", with: " ").replacingOccurrences(of: "」", with: "") }
+            summary = "执行 \(parts.count) 条命令：\(head.joined(separator: "、"))\(listed.count > 3 ? "…" : "")"
+        }
+
+        return HumanDescription(
+            title: needsAdmin ? "需要管理员权限，请确认" : "Claude 请求执行一组命令",
+            summary: summary,
+            detail: "这组命令会依次执行，前一步失败可能中断后续步骤。建议展开完整命令逐条确认。\(adminHint)",
+            action: "需要你决定：允许执行，还是拒绝？",
+            risk: maxRisk,
+            rawDetail: command,
+            rawLabel: "查看完整命令",
+            segments: enumerated(listed)
+        )
+    }
+
+    private static func enumerated(_ lines: [String]) -> [String] {
+        lines.enumerated().map { "\($0.offset + 1). \($0.element)" }
     }
 
     private static func highRiskHit(_ lower: String) -> (verb: String, detail: String)? {
@@ -258,7 +499,22 @@ enum Humanizer {
     }
 
     private static func shellVerb(_ lower: String) -> String {
-        if isCompound(lower) { return "执行一组命令" }
+        // 先按「命令名」识别只读/低风险动作，避免 `echo "rm ..."` 之类被关键词误判。
+        let head = lower.split(separator: " ").first.map(String.init) ?? lower
+        switch head {
+        case "ls": return "查看目录内容"
+        case "cat", "head", "tail", "less", "more": return "查看文件内容"
+        case "grep", "rg", "ag": return "搜索内容"
+        case "echo", "printf": return "输出文本"
+        case "ps", "pgrep", "top": return "查看进程"
+        case "sleep": return "等待"
+        case "pwd": return "查看当前目录"
+        case "find": return "查找文件"
+        case "wc": return "统计文件内容"
+        case "diff": return "比较文件差异"
+        case "du", "df": return "查看磁盘空间"
+        default: break
+        }
         if lower.contains("rm ") { return "删除文件或目录" }
         if lower.contains("mv ") { return "移动或重命名文件" }
         if lower.contains("cp ") { return "复制文件" }
@@ -282,7 +538,9 @@ enum Humanizer {
         }
         if lower.contains("curl") || lower.contains("wget") { return "从网络下载内容" }
         if lower.contains("docker") { return "操作 Docker 容器" }
-        if lower.contains("kill ") || lower.contains("pkill") { return "结束进程" }
+        if lower.contains("kill ") || lower.hasPrefix("kill ") || lower.hasPrefix("pkill ") || lower.contains(" pkill ") {
+            return "结束进程"
+        }
         if lower.contains("osascript") { return "执行系统脚本" }
         if lower.contains("python") || lower.contains("node ") || lower.contains("bash ") || lower.contains("sh ") {
             return "运行脚本"
