@@ -131,13 +131,14 @@ final class RequestPanelController: NSWindowController {
     private func build() {
         guard let panel = window else { return }
 
-        let root = NSVisualEffectView()
-        root.material = .popover
-        root.blendingMode = .behindWindow
-        root.state = .active
+        // 确认卡承担主要阅读内容，用实色背景保证正文对比度。
+        let root = NSView()
         root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
         root.layer?.cornerRadius = 16
         root.layer?.masksToBounds = true
+        root.layer?.borderWidth = 1
+        root.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.5).cgColor
         panel.contentView = root
 
         let stack = NSStackView()
