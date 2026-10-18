@@ -464,7 +464,8 @@ private final class ClickableRow: NSView {
 
         card.wantsLayer = true
         card.layer?.cornerRadius = 10
-        card.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.045).cgColor
+        // 白底卡片，避免半透明材质下文字对比度不足。
+        card.layer?.backgroundColor = Self.cardBackground.cgColor
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
 
@@ -544,12 +545,21 @@ private final class ClickableRow: NSView {
         tracking = area
     }
 
+    private static var cardBackground: NSColor {
+        .textBackgroundColor
+    }
+
+    private static var cardHoverBackground: NSColor {
+        NSColor.textBackgroundColor.blended(withFraction: 0.08, of: .controlAccentColor)
+            ?? .textBackgroundColor
+    }
+
     override func mouseEntered(with event: NSEvent) {
-        card.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.09).cgColor
+        card.layer?.backgroundColor = Self.cardHoverBackground.cgColor
     }
 
     override func mouseExited(with event: NSEvent) {
-        card.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.045).cgColor
+        card.layer?.backgroundColor = Self.cardBackground.cgColor
     }
 
     override func mouseDown(with event: NSEvent) {

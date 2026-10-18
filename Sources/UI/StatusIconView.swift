@@ -63,14 +63,17 @@ final class StatusIconView: NSView {
         imageView.contentTintColor = color
         imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .semibold)
         imageView.wantsLayer = true
+        layoutSubtreeIfNeeded()
+        centerLayerAnchor()
         imageView.layer?.removeAllAnimations()
 
         if spins {
             let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
             rotation.fromValue = 0
             rotation.toValue = CGFloat.pi * 2
-            rotation.duration = 1.4
+            rotation.duration = 1.2
             rotation.repeatCount = .infinity
+            rotation.timingFunction = CAMediaTimingFunction(name: .linear)
             rotation.isRemovedOnCompletion = false
             imageView.layer?.add(rotation, forKey: "statusSpin")
         }
@@ -85,5 +88,22 @@ final class StatusIconView: NSView {
             pulse.isRemovedOnCompletion = false
             imageView.layer?.add(pulse, forKey: "statusPulse")
         }
+    }
+
+    override func layout() {
+        super.layout()
+        centerLayerAnchor()
+    }
+
+    /// AppKit 的 layer-backed 视图默认锚点在左下角，直接旋转会绕角打转。
+    /// 校正到图层中心；bounds 还没算出来时跳过，等下一次 layout。
+    private func centerLayerAnchor() {
+        guard let layer = imageView.layer else { return }
+        let center = CGPoint(x: 0.5, y: 0.5)
+        guard layer.anchorPoint != center else { return }
+        let oldFrame = layer.frame
+        guard oldFrame.width > 0, oldFrame.height > 0 else { return }
+        layer.anchorPoint = center
+        layer.position = CGPoint(x: oldFrame.midX, y: oldFrame.midY)
     }
 }
