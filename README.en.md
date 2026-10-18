@@ -127,6 +127,7 @@ Claude Code session
 ## Uninstall
 
 ```bash
+# Adjust for your install location (downloads usually in /Applications; the source install script uses ~/Applications)
 /Applications/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch --uninstall-hooks
 ```
 

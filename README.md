@@ -127,6 +127,7 @@ Claude Code 会话
 ## 卸载
 
 ```bash
+# 按实际安装位置调整（下载安装通常在 /Applications，源码安装脚本装在 ~/Applications）
 /Applications/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch --uninstall-hooks
 ```
 

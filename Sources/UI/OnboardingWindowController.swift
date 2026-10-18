@@ -261,6 +261,11 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard !didNotifyClose else { return }
         didNotifyClose = true
+        // hooks 正常时，关窗即视为完成，不会每次启动都再弹一次；
+        // hooks 仍异常时保留未完成状态，下次启动继续引导。
+        if HookHealth.check() == .ok {
+            UserDefaults.standard.set(true, forKey: Self.completedKey)
+        }
         onClose()
     }
 }
