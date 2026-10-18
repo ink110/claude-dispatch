@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 
 final class MenuBarController: NSObject, NSPopoverDelegate {
-    /// 菜单栏弹层显示时收起常驻脉搏条，避免两个面板叠在一起。
+    /// 菜单栏弹层显示时收起常驻状态条，避免两个面板叠在一起。
     var onPopoverVisibilityChange: ((Bool) -> Void)?
 
     private let statusItem: NSStatusItem
@@ -26,12 +26,12 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         popover.contentViewController = content
 
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Claude Pulse")
+            button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Claude Dispatch")
             button.image?.isTemplate = true
             button.imagePosition = .imageLeading
             button.target = self
             button.action = #selector(togglePopover)
-            button.toolTip = "Claude Pulse · 观测所有 Claude Code 会话"
+            button.toolTip = "Claude Dispatch · 观测所有 Claude Code 会话"
         }
         content.onOpenTask = { [weak self] in self?.popover.performClose(nil) }
         refresh()
@@ -40,8 +40,8 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     func refresh() {
         guard let button = statusItem.button else { return }
         button.toolTip = agents.isDegraded
-            ? "Claude Pulse · 数据降级（正在用会话注册表兜底）"
-            : "Claude Pulse · 观测所有 Claude Code 会话"
+            ? "Claude Dispatch · 数据降级（正在用会话注册表兜底）"
+            : "Claude Dispatch · 观测所有 Claude Code 会话"
         let tasks = TaskBuilder.tasks(
             agentItems: agents.items,
             store: store,
@@ -57,7 +57,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             button.contentTintColor = .systemRed
             button.title = " \(pending)"
         } else {
-            button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Claude Pulse")
+            button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Claude Dispatch")
             button.image?.isTemplate = true
             if busy > 0 {
                 button.contentTintColor = .systemOrange
@@ -258,7 +258,7 @@ final class StatusViewController: NSViewController {
         container.translatesAutoresizingMaskIntoConstraints = false
         container.widthAnchor.constraint(equalToConstant: 392).isActive = true
 
-        let title = Theme.label("Claude Pulse", size: 14, weight: .semibold)
+        let title = Theme.label("Claude Dispatch", size: 14, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
 
         var parts: [String] = []
@@ -463,7 +463,7 @@ final class StatusViewController: NSViewController {
             // 注册失败时把开关恢复原状，避免 UI 状态与真实状态不一致。
             sender.state = sender.state == .on ? .off : .on
             NSSound.beep()
-            pulseLog("launchAtLogin toggle failed: \(error)")
+            dispatchLog("launchAtLogin toggle failed: \(error)")
         }
     }
 

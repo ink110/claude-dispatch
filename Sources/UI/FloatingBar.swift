@@ -1,6 +1,6 @@
 import AppKit
 
-/// 常驻悬浮的「脉搏条」：一眼看到有几个任务、谁在等你。
+/// 常驻悬浮的「状态条」：一眼看到有几个任务、谁在等你。
 /// 悬停展开会话列表，点击可固定/收起；不抢终端焦点。
 final class FloatingBarController {
     private let store: SessionStore
@@ -29,7 +29,7 @@ final class FloatingBarController {
         self.center = center
         self.agents = agents
 
-        let panel = PulsePanel(
+        let panel = DispatchPanel(
             contentRect: NSRect(x: 0, y: 0, width: 250, height: 40),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered,
@@ -41,7 +41,7 @@ final class FloatingBarController {
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        // 脉搏条必须能收到真实鼠标点击；拖动由 FloatingBarView 自己处理。
+        // 状态条必须能收到真实鼠标点击；拖动由 FloatingBarView 自己处理。
         panel.becomesKeyOnlyIfNeeded = false
         panel.isMovableByWindowBackground = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
@@ -50,7 +50,7 @@ final class FloatingBarController {
 
         barView.onClick = { [weak self] in
             guard let self else { return }
-            pulseLog("bar onClick health=\(self.health)")
+            dispatchLog("bar onClick health=\(self.health)")
             if case .broken = self.health {
                 self.repairHooks()
             } else {
@@ -66,7 +66,7 @@ final class FloatingBarController {
         }
     }
 
-    /// 菜单栏弹层打开时隐藏脉搏条，避免两个面板重叠。
+    /// 菜单栏弹层打开时隐藏状态条，避免两个面板重叠。
     func setSuppressed(_ value: Bool) {
         guard suppressed != value else { return }
         suppressed = value
@@ -81,7 +81,7 @@ final class FloatingBarController {
     func start() {
         restorePosition()
         compactPanel.orderFrontRegardless()
-        pulseLog("bar start frame=\(compactPanel.frame) ignoresMouse=\(compactPanel.ignoresMouseEvents) canKey=\(compactPanel.canBecomeKey)")
+        dispatchLog("bar start frame=\(compactPanel.frame) ignoresMouse=\(compactPanel.ignoresMouseEvents) canKey=\(compactPanel.canBecomeKey)")
 
         NotificationCenter.default.addObserver(
             self,
@@ -153,7 +153,7 @@ final class FloatingBarController {
     // MARK: - 位置
 
     private func restorePosition() {
-        if let raw = UserDefaults.standard.string(forKey: "ClaudePulseFloatingOrigin") {
+        if let raw = UserDefaults.standard.string(forKey: "ClaudeDispatchFloatingOrigin") {
             let point = NSPointFromString(raw)
             if NSScreen.screens.contains(where: { $0.visibleFrame.contains(point) }) {
                 compactPanel.setFrameOrigin(point)
@@ -173,7 +173,7 @@ final class FloatingBarController {
     }
 
     @objc private func panelDidMove() {
-        UserDefaults.standard.set(NSStringFromPoint(compactPanel.frame.origin), forKey: "ClaudePulseFloatingOrigin")
+        UserDefaults.standard.set(NSStringFromPoint(compactPanel.frame.origin), forKey: "ClaudeDispatchFloatingOrigin")
         if expandedPanel?.isVisible == true {
             positionExpanded()
         }
@@ -188,7 +188,7 @@ final class FloatingBarController {
             } else {
                 // 悬停已经打开了列表：这次点击的意图是「固定住」，而不是关掉它。
                 pinned = true
-                pulseLog("pin expanded")
+                dispatchLog("pin expanded")
             }
         } else {
             showExpanded(pin: true)
@@ -219,12 +219,12 @@ final class FloatingBarController {
     }
 
     private func showExpanded(pin: Bool) {
-        pulseLog("showExpanded pin=\(pin)")
+        dispatchLog("showExpanded pin=\(pin)")
         if pin { pinned = true }
         if expandedPanel == nil {
             let controller = StatusViewController(store: store, center: center, agents: agents)
             controller.onOpenTask = { [weak self] in self?.hideExpanded() }
-            let panel = PulsePanel(
+            let panel = DispatchPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 392, height: 420),
                 styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
                 backing: .buffered,
@@ -275,7 +275,7 @@ final class FloatingBarController {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    /// 展开后如果鼠标离开脉搏条和面板，0.8 秒后自动收起。
+    /// 展开后如果鼠标离开状态条和面板，0.8 秒后自动收起。
     private func startHoverWatch() {
         hoverTimer?.invalidate()
         var outsideTicks = 0
@@ -316,7 +316,7 @@ final class FloatingBarController {
         } else {
             ToastPanelController.shared.show(
                 title: "修复失败",
-                body: "请让 Claude Code 运行 ~/Desktop/claude-pulse/scripts/install.sh 重新安装提醒。",
+                body: "请重新打开安装包，或运行 ClaudeDispatch --install-hooks 重新安装提醒。",
                 accent: .systemRed,
                 autoDismiss: 9
             )
@@ -324,7 +324,7 @@ final class FloatingBarController {
     }
 }
 
-// MARK: - 脉搏条视图
+// MARK: - 状态条视图
 
 private final class FloatingBarView: NSVisualEffectView {
     var onClick: (() -> Void)?
@@ -356,7 +356,7 @@ private final class FloatingBarView: NSVisualEffectView {
         label.maximumNumberOfLines = 1
 
         setAccessibilityRole(.button)
-        setAccessibilityLabel("Claude Pulse 任务状态")
+        setAccessibilityLabel("Claude Dispatch 任务状态")
         setAccessibilityHelp("点击展开任务列表")
 
         let stack = NSStackView(views: [icon, label, degradedDot])
@@ -388,7 +388,7 @@ private final class FloatingBarView: NSVisualEffectView {
         total: Int,
         health: HookHealthLevel
     ) {
-        // 决策 hooks 挂了 = 工具失去了核心能力，整条脉搏条只说这一件事。
+        // 决策 hooks 挂了 = 工具失去了核心能力，整条状态条只说这一件事。
         if case .broken = health {
             icon.configure(state: .needsInput)
             label.stringValue = "提醒服务异常 · 点击修复"
@@ -427,7 +427,7 @@ private final class FloatingBarView: NSVisualEffectView {
         degradedDot.isHidden = health != .degraded
     }
 
-    /// 让整条脉搏条都能响应点击，而不只是背景区域。
+    /// 让整条状态条都能响应点击，而不只是背景区域。
     override func hitTest(_ point: NSPoint) -> NSView? {
         self
     }
@@ -455,7 +455,7 @@ private final class FloatingBarView: NSVisualEffectView {
     override func mouseExited(with event: NSEvent) { onHover?(false) }
 
     override func mouseDown(with event: NSEvent) {
-        pulseLog("bar mouseDown")
+        dispatchLog("bar mouseDown")
         dragStart = NSEvent.mouseLocation
         windowStart = window?.frame.origin
         didDrag = false
@@ -471,7 +471,7 @@ private final class FloatingBarView: NSVisualEffectView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        pulseLog("bar mouseUp didDrag=\(didDrag)")
+        dispatchLog("bar mouseUp didDrag=\(didDrag)")
         let wasDrag = didDrag
         dragStart = nil
         windowStart = nil

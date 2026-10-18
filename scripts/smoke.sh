@@ -1,12 +1,12 @@
 #!/bin/bash
 # 冒烟测试：不合成鼠标点击，用 curl 构造 hook 事件 + GET /status 断言状态机。
-# 前置：Claude Pulse 已在运行（./scripts/install.sh 或 open build/ClaudePulse.app）。
+# 前置：Claude Dispatch 已在运行（./scripts/install.sh 或 open build/ClaudeDispatch.app）。
 # 用法：./scripts/smoke.sh [--install-hooks]
 set -uo pipefail
 
-PORT="${CLAUDE_PULSE_PORT:-18765}"
-TOKEN_FILE="$HOME/.claude-pulse/token"
-TOKEN="${CLAUDE_PULSE_TOKEN:-$(cat "$TOKEN_FILE" 2>/dev/null || true)}"
+PORT="${CLAUDE_DISPATCH_PORT:-18765}"
+TOKEN_FILE="$HOME/.claude-dispatch/token"
+TOKEN="${CLAUDE_DISPATCH_TOKEN:-$(cat "$TOKEN_FILE" 2>/dev/null || true)}"
 BASE="http://127.0.0.1:${PORT}"
 AUTH="?token=${TOKEN}"
 
@@ -38,7 +38,7 @@ cleanup_children() {
 trap cleanup_children EXIT
 
 if ! snapshot | jq -e '.ok == true' >/dev/null 2>&1; then
-  echo "Claude Pulse 没有响应 ${BASE}/status，请先启动 App。"
+  echo "Claude Dispatch 没有响应 ${BASE}/status，请先启动 App。"
   exit 1
 fi
 
@@ -94,7 +94,7 @@ echo "$status" | jq -e '.pending_count == 0' >/dev/null \
 
 # 6. 可选：--install-hooks 幂等（会重写一次 settings.json，自动备份）
 if [ "${1:-}" = "--install-hooks" ]; then
-  APP="$HOME/Applications/ClaudePulse.app/Contents/MacOS/ClaudePulse"
+  APP="$HOME/Applications/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch"
   SETTINGS="$HOME/.claude/settings.json"
   if [ -x "$APP" ]; then
     before=$(jq '[.. | objects | select(.url? and ((.url | tostring) | contains("127.0.0.1:18765")))] | length' "$SETTINGS")

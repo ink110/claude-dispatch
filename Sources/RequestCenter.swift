@@ -29,9 +29,9 @@ final class RequestCenter {
 
     var store: SessionStore?
     var onChange: (() -> Void)?
-    /// 由悬浮条提供，让确认卡出现在脉搏条下方，而不是永远固定在屏幕右上角。
+    /// 由悬浮条提供，让确认卡出现在状态条下方，而不是永远固定在屏幕右上角。
     var anchorProvider: (() -> NSRect?)?
-    /// 数据源降级状态（`claude agents` 连续失败），用于 /status 和脉搏条。
+    /// 数据源降级状态（`claude agents` 连续失败），用于 /status 和状态条。
     var dataDegradedProvider: (() -> Bool)?
     var healthProvider: (() -> HookHealthLevel)?
     /// 由 App 层合并注册表与 agents 列表，判断会话是不是后台任务。
@@ -103,7 +103,7 @@ final class RequestCenter {
     ) {
         let hookName = event["hook_event_name"] as? String ?? ""
         let toolName = event["tool_name"] as? String ?? ""
-        let mode = event["_claude_pulse_mode"] as? String
+        let mode = event["_claude_dispatch_mode"] as? String
         let sessionId = event["session_id"] as? String ?? ""
         let input = event["tool_input"] as? [String: Any] ?? [:]
 
@@ -263,7 +263,7 @@ final class RequestCenter {
             }
         }
 
-        pulseLog("enqueue kind=\(kind.rawValue) session=\(sessionId) bg=\(isBackground) pending=\(pendingCount)")
+        dispatchLog("enqueue kind=\(kind.rawValue) session=\(sessionId) bg=\(isBackground) pending=\(pendingCount)")
         scheduleTimeout(for: request)
         scheduleEscalation(for: request)
         rebuildSnapshot()
@@ -342,7 +342,7 @@ final class RequestCenter {
     private func switchTo(id: String) {
         guard active?.id != id else { return }
         guard let index = queue.firstIndex(where: { $0.id == id }) else { return }
-        pulseLog("switch to \(id)")
+        dispatchLog("switch to \(id)")
         let target = queue.remove(at: index)
         if let current = active {
             queue.insert(current, at: 0)
@@ -419,7 +419,7 @@ final class RequestCenter {
                 panel.raiseToFront()
                 panel.moveToScreenUnderMouse()
             } else {
-                panel.escalatePulse()
+                panel.escalateAlert()
             }
             NSSound(named: "Ping")?.play()
         } else {
@@ -449,7 +449,7 @@ final class RequestCenter {
         guard !settledIds.contains(request.id) else { return }
         settledIds.insert(request.id)
         cancelTimers(for: request.id)
-        pulseLog("settle kind=\(request.kind.rawValue) session=\(request.sessionId)")
+        dispatchLog("settle kind=\(request.kind.rawValue) session=\(request.sessionId) action=\(action)")
 
         var body: [String: Any]?
         var success = true
@@ -671,7 +671,7 @@ final class RequestCenter {
         let name = sessionName(for: sessionId, cwd: cwd)
         ToastPanelController.shared.show(
             title: "\(name) · 已完成",
-            body: "任务已经结束。点击脉搏条可以看到这个会话的最新状态。",
+            body: "任务已经结束。点击状态条可以看到这个会话的最新状态。",
             accent: .systemGreen,
             autoDismiss: 4.5
         )
@@ -682,7 +682,7 @@ final class RequestCenter {
         let sessionId = event["session_id"] as? String ?? ""
         ToastPanelController.shared.show(
             title: "\(sessionName(for: sessionId, cwd: cwd)) · 等你处理",
-            body: "Claude 正在等你输入或确认，点击脉搏条查看。",
+            body: "Claude 正在等你输入或确认，点击状态条查看。",
             accent: .systemOrange,
             autoDismiss: 6
         )

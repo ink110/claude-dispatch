@@ -8,8 +8,8 @@ import Darwin
 /// - 已结束的交互式会话：用 `claude --resume <完整 id>` 重新打开历史对话。
 /// 生成 `.command` 文件交给 Launch Services 打开，不依赖 Apple Events 权限。
 enum TerminalLauncher {
-    private static let queue = DispatchQueue(label: "com.claudepulse.terminal", qos: .userInitiated)
-    private static let permissionQueue = DispatchQueue(label: "com.claudepulse.terminal.permission")
+    private static let queue = DispatchQueue(label: "com.ink.claudedispatch.terminal", qos: .userInitiated)
+    private static let permissionQueue = DispatchQueue(label: "com.ink.claudedispatch.terminal.permission")
     private static let stateLock = NSLock()
     private static var automationAllowed = false
 
@@ -106,9 +106,9 @@ enum TerminalLauncher {
         debugLog("terminal: opening command \(url.lastPathComponent)")
         NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: configuration) { _, error in
             if let error {
-                pulseLog("terminal: open command failed: \(error)")
+                dispatchLog("terminal: open command failed: \(error)")
             } else {
-                pulseLog("terminal: command opened")
+                dispatchLog("terminal: command opened")
             }
         }
     }
@@ -286,6 +286,6 @@ enum TerminalLauncher {
     }
 
     private static func debugLog(_ message: String) {
-        pulseLog("terminal: \(message)")
+        dispatchLog("terminal: \(message)")
     }
 }

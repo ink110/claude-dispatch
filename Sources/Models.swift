@@ -106,14 +106,14 @@ struct PendingRequest {
 
 struct AppConfig {
     static let port: UInt16 = 18765
-    static let appName = "Claude Pulse"
+    static let appName = "Claude Dispatch"
     static let home = FileManager.default.homeDirectoryForCurrentUser
-    static let stateDir = home.appendingPathComponent(".claude-pulse")
+    static let stateDir = home.appendingPathComponent(".claude-dispatch")
     static let tokenFile = stateDir.appendingPathComponent("token")
     static let settingsFile = home.appendingPathComponent(".claude/settings.json")
     /// 浮层无人响应后回落到终端弹窗的时间，可用环境变量覆盖。
     static var fallbackTimeout: TimeInterval {
-        if let raw = ProcessInfo.processInfo.environment["CLAUDE_PULSE_TIMEOUT"],
+        if let raw = ProcessInfo.processInfo.environment["CLAUDE_DISPATCH_TIMEOUT"],
            let value = Double(raw), value > 0 {
             return value
         }

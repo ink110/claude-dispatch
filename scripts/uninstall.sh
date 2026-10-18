@@ -1,41 +1,35 @@
 #!/bin/bash
+# 移除 Claude Dispatch 写入 ~/.claude/settings.json 的全部 hooks，并退出 App。
+# hook 的安装/卸载只有一份实现：ClaudeDispatch --uninstall-hooks。
 set -euo pipefail
 
-SETTINGS="$HOME/.claude/settings.json"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CANDIDATES=(
+  "$HOME/Applications/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch"
+  "/Applications/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch"
+  "$ROOT/build/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch"
+)
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "缺少 jq。"
+APP_BIN=""
+for candidate in "${CANDIDATES[@]}"; do
+  if [ -x "$candidate" ]; then
+    APP_BIN="$candidate"
+    break
+  fi
+done
+
+if [ -z "$APP_BIN" ]; then
+  echo "找不到 Claude Dispatch.app。"
+  echo "请先把 App 放回 ~/Applications 或 /Applications，再运行本脚本；"
+  echo "也可以直接运行：ClaudeDispatch --uninstall-hooks"
   exit 1
 fi
 
-if [ ! -f "$SETTINGS" ]; then
-  echo "没有找到 $SETTINGS"
-  exit 0
-fi
+"$APP_BIN" --uninstall-hooks
 
-BACKUP="$SETTINGS.bak-claude-pulse-uninstall-$(date +%Y%m%d-%H%M%S)"
-cp "$SETTINGS" "$BACKUP"
+pkill -f "ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch" 2>/dev/null || true
 
-jq '
-  def strip_cp:
-    map(select(([.hooks[]?.url?] | any(. != null and (contains("127.0.0.1:18765")))) | not));
-  if .hooks then
-    .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) | strip_cp) |
-    .hooks.PreToolUse = ((.hooks.PreToolUse // []) | strip_cp) |
-    .hooks.PostToolUse = ((.hooks.PostToolUse // []) | strip_cp) |
-    .hooks.Stop = ((.hooks.Stop // []) | strip_cp) |
-    .hooks.Notification = ((.hooks.Notification // []) | strip_cp) |
-    .hooks.SessionStart = ((.hooks.SessionStart // []) | strip_cp) |
-    .hooks.SessionEnd = ((.hooks.SessionEnd // []) | strip_cp) |
-    .hooks |= with_entries(select(.value | length > 0))
-  else . end
-' "$SETTINGS" > "$SETTINGS.claude-pulse.tmp"
-
-jq empty "$SETTINGS.claude-pulse.tmp"
-mv "$SETTINGS.claude-pulse.tmp" "$SETTINGS"
-
-# 退出正在运行的 App
-pkill -f "ClaudePulse.app/Contents/MacOS/ClaudePulse" 2>/dev/null || true
-
-echo "已移除 Claude Pulse 的 hooks（备份：$BACKUP）。"
-echo "App 仍保留在 ~/Applications/ClaudePulse.app；如需删除请手动移入废纸篓。"
+echo
+echo "已移除 Claude Dispatch 的 hooks（settings.json 已自动备份）。"
+echo "App 仍在原位置；如需彻底删除，请把 ClaudeDispatch.app 移到废纸篓，"
+echo "并在「系统设置 → 通用 → 登录项」中移除 Claude Dispatch。"

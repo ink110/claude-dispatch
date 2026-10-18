@@ -54,7 +54,7 @@ check(Humanizer.bareCommand("sudo FOO=1 pkill -f 'x'").hasPrefix("pkill"), "sudo
 
 // MARK: - kill / pkill
 
-let d1 = Humanizer.describePermission(toolName: "Bash", input: ["command": "pkill -f 'ClaudePulse.app/Contents/MacOS/ClaudePulse'"])
+let d1 = Humanizer.describePermission(toolName: "Bash", input: ["command": "pkill -f 'ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch'"])
 check(!d1.summary.contains("删除"), "pkill 不误报删除", d1.summary)
 check(d1.summary.contains("进程") || d1.summary.contains("结束"), "pkill 是结束进程", d1.summary)
 check(d1.risk == .medium || d1.risk == .high, "pkill 至少 medium 风险", "\(d1.risk)")
@@ -86,7 +86,7 @@ check(d6.summary.contains("3 条命令"), "复合摘要含条数", d6.summary)
 
 // MARK: - 敏感路径
 
-let d7 = Humanizer.describePermission(toolName: "Write", input: ["file_path": "/Users/ink/.ssh/authorized_keys"])
+let d7 = Humanizer.describePermission(toolName: "Write", input: ["file_path": "/Users/example/.ssh/authorized_keys"])
 check(d7.risk == .high, "敏感路径 Write 高风险", "\(d7.risk)")
 
 let d8 = Humanizer.describePermission(toolName: "Edit", input: ["file_path": "/tmp/plain.txt"])

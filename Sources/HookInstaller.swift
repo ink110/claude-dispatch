@@ -103,7 +103,7 @@ enum HookHealth {
     }
 }
 
-/// hooks 安装/卸载的唯一实现。install.sh 通过 `ClaudePulse --install-hooks` 调用，
+/// hooks 安装/卸载的唯一实现。install.sh 通过 `ClaudeDispatch --install-hooks` 调用，
 /// App 内「点击修复」也走这里；不再维护第二份 jq 版本。
 enum HookInstaller {
     /// 幂等安装：先剥离本工具旧 hooks，再写入完整配置。备份自动轮转（保留最近 5 份）。
@@ -232,7 +232,7 @@ enum HookInstaller {
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyyMMdd-HHmmss"
             let backup = dir.appendingPathComponent(
-                "settings.json.bak-claude-pulse-\(formatter.string(from: Date()))"
+                "settings.json.bak-claude-dispatch-\(formatter.string(from: Date()))"
             )
             do {
                 try fm.copyItem(at: AppConfig.settingsFile, to: backup)
@@ -241,7 +241,7 @@ enum HookInstaller {
             }
         }
 
-        let prefix = "settings.json.bak-claude-pulse"
+        let prefix = "settings.json.bak-claude-dispatch"
         let backups = ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? [])
             .filter { $0.hasPrefix(prefix) }
             .sorted()

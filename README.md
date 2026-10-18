@@ -1,163 +1,151 @@
-# Claude Pulse（任务脉搏）
+# Claude Dispatch
 
-macOS 菜单栏小工具：同时盯住多个 Claude Code 会话，在任务需要你确认时主动弹出浮层，直接批复或补充信息，不用切回终端。
+[English](README.en.md) · 中文
 
-不依赖 Claude 账号，用 DeepSeek 等第三方 provider 同样可用；纯本地运行，不联网、无遥测。
+macOS 菜单栏上的 Claude Code 任务调度台：同时盯住多个会话，在任务需要你确认时主动提醒，并让你直接在浮层里批复，不用切回终端。
 
-## 它解决什么
+纯本地运行，不联网、无遥测；不依赖 Claude 账号，用 DeepSeek 等第三方 provider 同样可用。
 
-你同时跑多个 Claude Code 任务时，常见三个问题：
+![权限确认卡](docs/request-card.png)
 
-1. 某个任务卡在权限确认，你却没看见，时间白等。
+## 解决什么问题
+
+同时跑多个 Claude Code 任务时，最常见的三个坑：
+
+1. 某个任务卡在权限确认，你没看见，时间白等。
 2. Claude 反问你一个问题，你要重新找到那个终端窗口。
 3. 想知道「现在到底有几个任务在跑、哪个在等我」。
 
-Claude Pulse 对应给出：
+Claude Dispatch 的做法：
 
-- **常驻脉搏条**：右上角一条常驻提示，显示「几个任务运行中 / 几个请求等你处理 / 谁可能卡住」。可拖动，所有 Space 和全屏应用上都可见。
-- **状态面板**：悬停或点击脉搏条展开，按「需要你处理 / 运行中 / 空闲」分组列出所有会话，含项目路径、已运行时长、最近活动、当前在做什么。
-- **确认浮层**：权限请求、Claude 提问、计划批准三类场景，直接在弹出的卡片上处理。默认只显示中文描述和你要做的动作，原始命令收在「查看完整命令」里。
-- **提醒升级**：确认卡 15 秒未处理会脉冲并再响一次；45 秒会抬到最前，并移动到鼠标所在屏幕；之后最多再提醒 3 次。不会抢键盘焦点。
-- **完成提示**：任务结束时右上角出现轻提示，不打断你。
-- **失效修复**：cc-switch 重写 settings 导致 hooks 丢失时，脉搏条会显示「点击修复」，点一下即可恢复。
+- **常驻状态条**：右上角显示「几个任务运行中 / 几个请求等你处理」。可拖动，所有 Space 和全屏应用上都可见。
+- **状态面板**：悬停或点击状态条展开，按「需要你处理 / 运行中 / 空闲」分组列出所有会话，含项目路径、运行时长、最近活动。
+- **确认浮层**：权限请求、Claude 提问、计划批准三类场景直接处理。默认只显示中文描述和你要做的动作，原始命令收在「查看完整命令」里。
+- **长内容可滚动**：问题很多、命令很长时，卡片自动限制高度，正文滚动，提交/允许按钮始终固定在底部。
+- **提醒升级**：15 秒未处理会脉冲并再响一次；45 秒抬到最前，并移动到鼠标所在屏幕。不抢键盘焦点。
+- **点卡片回终端**：后台任务用 `claude attach`，交互式会话精确切到对应标签页，已结束的会话用 `claude --resume` 恢复。
+- **失效修复**：cc-switch 重写 settings 导致 hooks 丢失时，状态条显示「点击修复」，点一下即可恢复。
+
+![常驻状态条](docs/status-bar.png)
+
+## 系统要求
+
+- macOS 14 Sonoma 或更高
+- Apple Silicon 或 Intel（通用二进制）
+- 已安装并可使用 [Claude Code](https://claude.com/claude-code)
+
+> v1.0.0 的应用界面为中文。
 
 ## 安装
 
+### 下载安装（推荐）
+
+1. 到 [Releases](https://github.com/ink/claude-dispatch/releases/latest) 下载 `ClaudeDispatch-1.0.0.zip`。
+2. 解压，把 `ClaudeDispatch.app` 拖进「应用程序」。
+3. **首次打开必须右键 →「打开」**。应用没有 Apple 开发者签名，双击会被 Gatekeeper 拦下。
+
+   如果仍然提示无法打开，到「系统设置 → 隐私与安全性」点「仍要打开」；或在终端执行：
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/ClaudeDispatch.app
+   ```
+
+4. 首次启动会出现引导窗口，点「启用提醒」。正在运行的 Claude Code 会话需要重启后才会加载新 hooks。
+
+也可以校验下载包的 SHA-256（Release 页面会同时提供 `.sha256`）：
+
 ```bash
-cd ~/Desktop/claude-pulse
+shasum -a 256 -c ClaudeDispatch-1.0.0.zip.sha256
+```
+
+### 从源码构建
+
+要求 Xcode Command Line Tools（`swiftc`），不需要 Homebrew、jq 或第三方依赖。
+
+```bash
+git clone https://github.com/ink/claude-dispatch.git
+cd claude-dispatch
 ./scripts/install.sh
 ```
 
-脚本会：
-
-1. 编译 App 并装到 `~/Applications/ClaudePulse.app`
-2. 调用 `ClaudePulse --install-hooks`：生成随机 token（`~/.claude-pulse/token`，权限 600）、备份 `~/.claude/settings.json`、幂等写入 hooks
-3. 启动 App；首次从 `~/Applications` 启动会默认开启「登录时启动」
-
-要求：macOS 14+、Xcode Command Line Tools（`swiftc`）。不需要 Homebrew 或 jq。
+`install.sh` 会编译通用二进制、安装到 `~/Applications/ClaudeDispatch.app`、写入 hooks（自动备份 `~/.claude/settings.json`）并启动应用。
 
 ## 使用
 
-- **脉搏条**：常驻右上角，橙点 = 有任务在跑，红点 = 有请求等你，黄字 = 可能卡住。悬停展开会话列表；拖动可换位置，位置会记住。
-- **权限确认**：默认只显示中文摘要、影响说明和你要做的动作，例如「删除文件和目录『build/tmp』」「需要你决定：允许这次操作，还是拒绝？」。想核对原文时点「查看完整命令」。
-- **Claude 提问**：中文说明 + 问题本身；单选 / 多选直接点，也可以自己输入答案；支持一次多个问题。
-- **计划批准**：中文说明 + 计划正文；可以「批准计划」，或填写修改意见后「要求修改」。
-- **提醒升级**：确认卡不会自动消失。15 秒脉冲 + 再响一次；45 秒抬到最前并移动到鼠标所在屏幕；之后最多再提醒 3 次。全程不抢键盘焦点。
-- **转回终端**：不想在浮层处理时，点右上角「转回终端」或按 Esc，确认会回到终端原生弹窗。
-- **打开任务**：点任意任务卡片都会打开对应终端。后台任务在 Terminal 新窗口执行 `claude attach <id>`；交互式会话把 Terminal 切到前台（授予自动化权限后会精确选中对应标签页）；已结束的任务用 `claude --resume` 恢复历史对话。
-- **等待输入**：终端自己在等输入、但 App 没有卡片可展示时（例如 hook 连接已断开），任务显示橙色「等待输入」，不计入红色「请求等你处理」；点卡片可直接进入该会话。
-- **可能卡住**：会话处于运行中、但 5 分钟没有任何工具活动时，会标成「可能卡住」，只提示，不自动干预。
+- **状态条**：橙点 = 有任务在跑，红点 = 有请求等你，黄字 = 可能卡住。悬停展开列表；拖动可换位置，位置会记住。
+- **权限确认**：显示中文摘要、影响说明和动作按钮；想核对原文时点「查看技术细节」。
+- **Claude 提问**：单选 / 多选直接点，也可以自己输入；支持一次多个问题，内容过长时滚动查看。
+- **计划批准**：可「批准计划」，或填写修改意见后「要求修改」。
+- **转回终端**：点右上角「转回终端」或按 Esc，确认会回到 Claude Code 的原生弹窗。
+- **打开任务**：点击任意任务卡片进入对应终端会话。
+- **登录时启动**：首次从安装目录启动会默认开启；之后可在状态面板底部关闭。
 
-### 为什么有些命令不弹确认
+### 控制「终端」的自动化权限（可选）
 
-Claude Code 当前的默认权限模式是 `auto`（分类器自动批准），加上你的 `permissions.allow` 里有 `Bash(*)`，大部分命令不会进入确认流程。
+点击交互式任务卡片时，精确选中对应的 Terminal 标签页需要「控制终端」权限。未授权时只会把 Terminal 切到前台，`claude attach` 不受影响。
 
-- 想让写操作都经过你：在 Claude Code 里用 `Shift+Tab` 切到 **Manual**。
-- 想只拦高风险命令：在 `~/.claude/settings.json` 的 `permissions.ask` 里加规则，例如：
-
-```json
-{
-  "permissions": {
-    "ask": [
-      "Bash(rm *)",
-      "Bash(git push *)",
-      "Bash(git reset --hard *)"
-    ]
-  }
-}
-```
-
-规则语法是 `Bash(命令前缀 *)`，`*` 匹配任意后续内容。ask 规则优先于 allow。
-
-## 卸载
+如果授权弹窗没有出现，可主动调出：
 
 ```bash
-cd ~/Desktop/claude-pulse
-./scripts/uninstall.sh
+open -n /Applications/ClaudeDispatch.app --args --request-automation
 ```
 
-只移除 Claude Pulse 写入的 hooks，并备份当前设置。App 仍在 `~/Applications/ClaudePulse.app`，手动移到废纸篓即可。
+## 隐私与安全
+
+- hook 服务只绑定 `127.0.0.1:18765`，所有请求都校验本机随机 token（`~/.claude-dispatch/token`，权限 600）。
+- 不联网、无遥测、不上传代码或对话内容。
+- 只修改 Claude Code 的 `~/.claude/settings.json` 中的 hooks 字段，每次修改前自动备份（保留最近 5 份）。
+- 不会静默批准任何操作；「以后都允许同类操作」也必须由你点击。
+- App 未运行、超时或返回错误时，Claude Code 自动回落到终端原生确认，不会把任务卡死。
 
 ## 工作原理
 
 ```
 Claude Code 会话
-  ├─ claude agents --json  ──每 5 秒──> 脉搏条 / 状态面板（主数据源）
-  │    └─ 连续失败 → 降级读 ~/.claude/sessions/<pid>.json（脉搏条黄点）
+  ├─ claude agents --json ──每 5 秒──> 状态条 / 状态面板（主数据源）
+  │    └─ 连续失败 → 降级读 ~/.claude/sessions/<pid>.json
   └─ hooks ──HTTP POST──> 127.0.0.1:18765 ──> 浮层 ──> 返回 allow / deny / 答案
-       └─ PreToolUse / PostToolUse（mode=activity）──> 活动流（当前工具、命令摘要、最近活动）
 ```
 
-使用的 hook 事件：
-
-| 事件 | 作用 |
+| Hook 事件 | 作用 |
 |---|---|
-| `PermissionRequest` | 权限确认、计划批准；浮层阻塞等待你的选择 |
+| `PermissionRequest` | 权限确认、计划批准；浮层阻塞等待选择 |
 | `PreToolUse`（`AskUserQuestion`） | 回答问题，返回 `updatedInput.answers` |
-| `PreToolUse` / `PostToolUse`（`*`，`mode=activity`） | 记录「正在做什么」，只记录、不决策，2 秒超时 |
-| `Stop` | 一轮回复结束；只更新活动，不弹提示 |
-| `Notification`（`idle_prompt` / `agent_needs_input`） | 等你输入时提示 |
-| `Notification`（`agent_completed`） | 后台任务真正完成时弹轻提示 |
-| `SessionStart` / `SessionEnd` | 刷新状态；SessionEnd 进入「最近完成」列表（保留 10 分钟） |
+| `PreToolUse` / `PostToolUse`（`*`，`mode=activity`） | 记录「正在做什么」，只记录、不决策 |
+| `Stop` | 一轮回复结束，只更新活动 |
+| `Notification` | 等待输入、后台任务完成提醒 |
+| `SessionStart` / `SessionEnd` | 刷新状态与「最近完成」列表 |
 
-活动流与决策使用不同的 URL（`mode=activity`），避免同一个事件被处理两次。
+## 限制
 
-设计约束：
+- 只处理需要你决策的环节：权限、提问、计划批准。想让 Claude 凭空开始一个新任务，请回终端。
+- 同一时间显示一张确认卡，多个请求排队；卡片顶部 chips 可切换，切换不丢已填内容。
+- 「计划批准」是尽力而为：部分 Claude Code 版本/模式下 `ExitPlanMode` 由终端 TUI 自己处理，此时仍回落到终端。
+- 应用未公证，首次打开需要右键或手动放行。
+- 数据源优先使用官方 `claude agents --json`；Claude Code 大版本升级后接口若有变化，状态条可能显示数据降级。
 
-- 服务只绑定 `127.0.0.1`，每个请求校验 token。
-- 不会静默批准任何操作；「以后都允许」也必须由你点击。
-- 不读取对话内容；状态优先来自官方 `claude agents --json`，注册表只做降级。
-- **交互式会话**：App 未启动、超时（默认 600 秒）或返回非 2xx 时，Claude Code 自动回落到终端原生确认。
-- **后台会话**：没有可回落的终端，卡片永不自动超时；显示「在终端打开」，点击后先释放 hook 再 `claude attach`，不会把任务静默拒绝。
-- 多个请求同时到达时只显示一张卡，头部 chips 可切换；每个请求保留自己的已填内容。
-
-## 常见问题
-
-**为什么新功能对正在跑的会话不生效？**
-Claude Code 在会话启动时读取 hooks。安装或修复后，新启动的会话会使用新的活动流和提醒；已经在跑的会话需要重启（或在下次启动时）才会生效。
-
-**改完 cc-switch 的 provider 后不弹了？**
-cc-switch 可能重写 `~/.claude/settings.json`，把 hooks 清掉。脉搏条会显示「点击修复」，点一下即可；也可以重新执行 `./scripts/install.sh`（幂等）。
-
-**点了交互式任务只切到 Terminal，没选中对应标签页？**
-精确选中标签页需要「控制终端」的自动化权限：系统设置 → 隐私与安全性 → 自动化 → 允许 Claude Pulse 控制「终端」。未授权时只会把终端切到前台；后台任务的 `claude attach` 不受影响。如果授权弹窗没有出现，执行下面的命令主动调出：
+## 卸载
 
 ```bash
-open -n ~/Applications/ClaudePulse.app --args --request-automation
+/Applications/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch --uninstall-hooks
 ```
 
-**端口被占用？**
-默认端口 18765。关闭另一个 Claude Pulse 实例后再启动。
-
-**浮层一直没出现，但终端在等？**
-确认 App 正在运行：菜单栏应有脉搏图标。如果 App 没运行，hook 连接失败会自动回落到终端，不会卡住任务。
-
-**想调整无人响应后的回退时间？**
-从终端启动 App 时设置环境变量，例如：
-
-```bash
-CLAUDE_PULSE_TIMEOUT=120 ~/Applications/ClaudePulse.app/Contents/MacOS/ClaudePulse
-```
-
-## 登录自启与调试
-
-- **登录时启动**：首次从 `~/Applications` 启动会默认注册；之后可在状态面板底部用「登录时启动」开关控制。
-- **调试日志**：默认关闭。需要排障时用 `CLAUDE_PULSE_DEBUG=1` 启动 App，或 `open -a ClaudePulse --args --debug`；日志写入 `~/.claude-pulse/debug.log`，超过 1MB 自动清空。
-- **调试开关**：`--show-status` 启动即展开状态面板；`--request-automation` 主动调出「控制终端」授权框；`--focus-pid <pid>`（可配合 `--focus-session <session-id>`）启动后立即尝试聚焦该进程所在的终端标签页（验证自动化链路）。
+这会移除全部 Claude Dispatch hooks 并备份 settings。然后把 `ClaudeDispatch.app` 移到废纸篓，并在「系统设置 → 通用 → 登录项」中移除 Claude Dispatch。
 
 ## 开发
 
 ```bash
-./scripts/build.sh          # 编译并组装 build/ClaudePulse.app
+./scripts/build.sh          # 编译 arm64 + x86_64 通用二进制
 ./scripts/test-humanizer.sh # Humanizer 纯函数测试
-./scripts/smoke.sh          # curl + /status 冒烟测试（App 需在运行）
+./scripts/smoke.sh          # curl + /status 冒烟测试（App 需运行）
+./scripts/demo-request.sh   # 注入合成的长提问卡，验证滚动与固定按钮
+./scripts/package.sh        # 生成 dist/ClaudeDispatch-<version>.zip + SHA-256
 ```
 
-源码结构见 `CLAUDE.md`。Swift + AppKit，零第三方依赖。
+Swift + AppKit，零第三方依赖。源码结构与设计约定见 [CLAUDE.md](CLAUDE.md)。
 
-## 边界
+## 许可证
 
-- 只覆盖「工具调用需要的信息」：权限、Claude 的提问、计划批准。任务空闲时想凭空给 Claude 发一条消息，不在本工具范围内。
-- 同一时间只显示一张确认卡片，多个请求按到达顺序排队；卡片头部 chips 可切换，切换不丢已填内容。
-- `AskUserQuestion` 的回答格式是官方 hook 协议；DeepSeek 模型是否调用这个工具取决于它自己的行为。
-- **计划批准是尽力而为**：当前 Claude Code 版本里，`ExitPlanMode` 的确认有时由终端 TUI 自己处理（「Ready to code?」），不经过 hook；这种情况下仍回落到终端，浮层不会出现。权限确认和提问不受影响。本工具已经注册了官方的 `PreToolUse → ExitPlanMode` 钩子，在会走 hook 的版本/模式里可直接在浮层批准。
+[MIT](LICENSE) © 2026 ink
+
+Claude 是 Anthropic 的商标。本项目是独立的社区工具，与 Anthropic 没有隶属或背书关系。

@@ -1,9 +1,9 @@
 import Foundation
 
-/// 轻量本地调试日志。默认关闭；设置 CLAUDE_PULSE_DEBUG=1 后写入
-/// ~/.claude-pulse/debug.log，超过 1MB 自动清空重写，避免无限增长。
-func pulseLog(_ message: String) {
-    guard ProcessInfo.processInfo.environment["CLAUDE_PULSE_DEBUG"] == "1" else { return }
+/// 轻量本地调试日志。默认关闭；设置 CLAUDE_DISPATCH_DEBUG=1 后写入
+/// ~/.claude-dispatch/debug.log，超过 1MB 自动清空重写，避免无限增长。
+func dispatchLog(_ message: String) {
+    guard ProcessInfo.processInfo.environment["CLAUDE_DISPATCH_DEBUG"] == "1" else { return }
 
     let url = AppConfig.stateDir.appendingPathComponent("debug.log")
     let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"

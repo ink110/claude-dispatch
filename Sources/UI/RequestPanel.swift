@@ -22,6 +22,9 @@ final class RequestPanelController: NSWindowController {
     private var rawContainer: NSView?
     private var rawButton: NSButton?
     private var rootStack: NSStackView!
+    private var bodyStack: NSStackView!
+    private var bodyScroll: NSScrollView!
+    private var bodyHeightConstraint: NSLayoutConstraint!
     private var isShowingRaw = false
 
     init(
@@ -40,7 +43,7 @@ final class RequestPanelController: NSWindowController {
         self.onSelect = onSelect
         self.onAction = onAction
 
-        let panel = PulsePanel(
+        let panel = DispatchPanel(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 220),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered,
@@ -49,7 +52,7 @@ final class RequestPanelController: NSWindowController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        // 确认卡必须高于脉搏条展开面板，避免互相遮挡。
+        // 确认卡必须高于状态条展开面板，避免互相遮挡。
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
@@ -82,16 +85,55 @@ final class RequestPanelController: NSWindowController {
         relayout()
     }
 
-    private func relayout() {
+    /// 顶部信息和底部按钮固定，只有中间正文滚动。
+    /// 面板高度夹紧到屏幕可见高度，内容再长也不会把「提交/允许」挤出屏幕。
+    private func relayout(keepingTop: Bool = false) {
         guard let panel = window as? NSPanel else { return }
+
+        bodyStack.layoutSubtreeIfNeeded()
+        let contentHeight = max(0, ceil(bodyStack.fittingSize.height))
+
+        let screen = screenForAnchor() ?? screenUnderMouse() ?? NSScreen.main
+        let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 440, height: 900)
+        let maxPanelHeight = max(360, visibleFrame.height - 64)
+
+        // 先把正文折叠为 0，量出固定区域的真实高度（含边距和间距）。
+        bodyHeightConstraint.constant = 0
         rootStack.layoutSubtreeIfNeeded()
-        panel.setContentSize(NSSize(width: 440, height: rootStack.fittingSize.height + 32))
-        position(panel)
+        let chromeHeight = max(0, ceil(rootStack.fittingSize.height))
+
+        let bodyMax = max(80, maxPanelHeight - chromeHeight)
+        let visibleBody = min(contentHeight, bodyMax)
+        let overflowing = contentHeight > visibleBody + 0.5
+
+        bodyHeightConstraint.constant = visibleBody
+        bodyScroll.hasVerticalScroller = overflowing
+        bodyScroll.verticalScrollElasticity = overflowing ? .automatic : .none
+        rootStack.layoutSubtreeIfNeeded()
+
+        let totalHeight = min(ceil(rootStack.fittingSize.height), maxPanelHeight)
+        let oldTop = panel.frame.maxY
+        panel.setContentSize(NSSize(width: 440, height: totalHeight))
+
+        if keepingTop {
+            var origin = NSPoint(x: panel.frame.origin.x, y: oldTop - panel.frame.height)
+            origin.y = min(
+                max(origin.y, visibleFrame.minY + 18),
+                visibleFrame.maxY - panel.frame.height - 18
+            )
+            origin.x = min(
+                max(origin.x, visibleFrame.minX + 18),
+                visibleFrame.maxX - panel.frame.width - 18
+            )
+            panel.setFrameOrigin(origin)
+        } else {
+            position(panel)
+        }
     }
 
     // MARK: - 提醒升级
 
-    func escalatePulse() {
+    func escalateAlert() {
         guard let view = window?.contentView else { return }
         view.wantsLayer = true
         view.layer?.cornerRadius = 16
@@ -104,7 +146,7 @@ final class RequestPanelController: NSWindowController {
         animation.duration = 0.35
         animation.autoreverses = true
         animation.repeatCount = 3
-        view.layer?.add(animation, forKey: "claudePulse")
+        view.layer?.add(animation, forKey: "claudeDispatch")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak view] in
             view?.layer?.borderWidth = 0
@@ -166,17 +208,65 @@ final class RequestPanelController: NSWindowController {
 
         stack.addArrangedSubview(makeSessionLine())
 
+        let body: NSView
         switch request.kind {
         case .permission:
-            stack.addArrangedSubview(makePermissionBody())
+            body = makePermissionBody()
         case .plan:
-            stack.addArrangedSubview(makePlanBody())
+            body = makePlanBody()
         case .question:
-            stack.addArrangedSubview(makeQuestionBody())
+            body = makeQuestionBody()
         }
 
+        // 三段式：头部固定 → 正文滚动 → 底部按钮固定。
+        let scroll = makeScrollableBody(body)
+        stack.addArrangedSubview(scroll)
+        stack.setCustomSpacing(12, after: scroll)
+
+        let divider = makeDivider()
+        stack.addArrangedSubview(divider)
+        stack.setCustomSpacing(12, after: divider)
+
         stack.addArrangedSubview(makeFooter())
-        stack.setCustomSpacing(14, after: stack.arrangedSubviews.last!)
+    }
+
+    private func makeScrollableBody(_ content: NSView) -> NSScrollView {
+        let document = FlippedDocumentView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+
+        let body = NSStackView()
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = 11
+        body.translatesAutoresizingMaskIntoConstraints = false
+        body.addArrangedSubview(content)
+        bodyStack = body
+
+        document.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            body.topAnchor.constraint(equalTo: document.topAnchor),
+            body.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+            document.widthAnchor.constraint(equalToConstant: 404)
+        ])
+
+        let scroll = NSScrollView()
+        scroll.documentView = document
+        scroll.hasVerticalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.verticalScrollElasticity = .none
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.widthAnchor.constraint(equalToConstant: 404).isActive = true
+        let height = scroll.heightAnchor.constraint(equalToConstant: 120)
+        height.isActive = true
+
+        bodyScroll = scroll
+        bodyHeightConstraint = height
+        return scroll
     }
 
     private func makeHeader() -> NSView {
@@ -185,6 +275,7 @@ final class RequestPanelController: NSWindowController {
         row.alignment = .centerY
         row.spacing = 8
         row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalToConstant: 404).isActive = true
 
         let color: NSColor = {
             switch request.kind {
@@ -444,43 +535,62 @@ final class RequestPanelController: NSWindowController {
     }
 
     private func makeFooter() -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-
         let hint = Theme.label(keyboardHint, size: 10, color: .tertiaryLabelColor)
-        row.addArrangedSubview(hint)
-        row.addArrangedSubview(Theme.spacer())
+        // 操作按钮优先，提示文案空间不足时截断，绝不把按钮挤出卡片。
+        hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        hint.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        var buttons: [NSButton] = []
         switch request.kind {
         case .permission:
-            if request.hasSuggestions {
-                let always = NSButton(checkboxWithTitle: "以后都允许同类操作", target: nil, action: nil)
-                always.font = .systemFont(ofSize: 10.5)
-                row.addArrangedSubview(always)
-                always.tag = 9001
-            }
-            row.addArrangedSubview(makeButton("拒绝", action: #selector(denyTapped), primary: false))
+            buttons.append(makeButton("拒绝", action: #selector(denyTapped), primary: false))
             let allow = makeButton("允许执行", action: #selector(allowTapped), primary: true)
             allow.keyEquivalent = "\r"
             allow.keyEquivalentModifierMask = [.command]
-            row.addArrangedSubview(allow)
+            buttons.append(allow)
 
         case .plan:
-            row.addArrangedSubview(makeButton("要求修改", action: #selector(reviseTapped), primary: false))
+            buttons.append(makeButton("要求修改", action: #selector(reviseTapped), primary: false))
             let approve = makeButton("批准计划", action: #selector(allowTapped), primary: true)
             approve.keyEquivalent = "\r"
             approve.keyEquivalentModifierMask = [.command]
-            row.addArrangedSubview(approve)
+            buttons.append(approve)
 
         case .question:
             let submit = makeButton("提交回答", action: #selector(submitTapped), primary: true)
             submit.keyEquivalent = "\r"
             submit.keyEquivalentModifierMask = [.command]
-            row.addArrangedSubview(submit)
+            buttons.append(submit)
         }
+
+        // 「以后都允许」复选框会让单行放不下提示文案：提示独占一行，按钮放第二行。
+        if request.kind == .permission, request.hasSuggestions {
+            let always = NSButton(checkboxWithTitle: "以后都允许同类操作", target: nil, action: nil)
+            always.font = .systemFont(ofSize: 10.5)
+            always.tag = 9001
+
+            let hintRow = footerRow([hint, Theme.spacer()])
+            let actionRow = footerRow([always, Theme.spacer()] + buttons)
+            let column = NSStackView(views: [hintRow, actionRow])
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = 8
+            column.translatesAutoresizingMaskIntoConstraints = false
+            column.widthAnchor.constraint(equalToConstant: 404).isActive = true
+            return column
+        }
+
+        return footerRow([hint, Theme.spacer()] + buttons)
+    }
+
+    private func footerRow(_ views: [NSView]) -> NSStackView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalToConstant: 404).isActive = true
+        for view in views { row.addArrangedSubview(view) }
         return row
     }
 
@@ -540,19 +650,7 @@ final class RequestPanelController: NSWindowController {
 
     /// 展开技术细节时保持顶部不动、向下生长，避免按钮跳到鼠标下面造成误点。
     private func resizeKeepingTop() {
-        guard let panel = window as? NSPanel else { return }
-        rootStack.layoutSubtreeIfNeeded()
-        let top = panel.frame.maxY
-        panel.setContentSize(NSSize(width: 440, height: rootStack.fittingSize.height + 32))
-
-        var origin = NSPoint(x: panel.frame.origin.x, y: top - panel.frame.height)
-        if let screen = screenForAnchor() ?? screenUnderMouse() ?? NSScreen.main {
-            let frame = screen.visibleFrame
-            if origin.y < frame.minY + 18 {
-                origin.y = frame.minY + 18
-            }
-        }
-        panel.setFrameOrigin(origin)
+        relayout(keepingTop: true)
     }
 
     private func position(_ panel: NSPanel) {
@@ -570,6 +668,15 @@ final class RequestPanelController: NSWindowController {
             if origin.y < anchorFrame.minY + 18 {
                 origin.y = anchorFrame.maxY - size.height - 18
             }
+            // 卡片可能接近整屏高：把坐标夹回屏幕内，至少保证顶部标题和底部按钮可见。
+            origin.x = min(
+                max(origin.x, anchorFrame.minX + 18),
+                anchorFrame.maxX - size.width - 18
+            )
+            origin.y = min(
+                max(origin.y, anchorFrame.minY + 18),
+                anchorFrame.maxY - size.height - 18
+            )
         } else {
             origin = NSPoint(
                 x: screenFrame.maxX - size.width - 18,
@@ -794,4 +901,9 @@ private final class OptionRowButton: NSButton {
         super.mouseDown(with: event)
         applyStyle()
     }
+}
+
+/// 滚动文档视图：从顶部开始排布，内容不足一屏时不会被垂直居中。
+private final class FlippedDocumentView: NSView {
+    override var isFlipped: Bool { true }
 }

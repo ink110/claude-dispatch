@@ -26,7 +26,7 @@ final class HookServer {
     private let onEvent: EventHandler
     /// GET /status 的数据源。必须在任意线程安全（内部自带锁），因为在 `queue` 上被调用。
     var statusProvider: (() -> Data?)?
-    fileprivate let queue = DispatchQueue(label: "com.ink.claudepulse.http")
+    fileprivate let queue = DispatchQueue(label: "com.ink.claudedispatch.http")
     private var listener: NWListener?
     private let connectionLock = NSLock()
     private var connections: [ObjectIdentifier: Connection] = [:]
@@ -55,7 +55,7 @@ final class HookServer {
         }
         listener.stateUpdateHandler = { state in
             if case .failed(let error) = state {
-                NSLog("[ClaudePulse] listener failed: \(error)")
+                NSLog("[ClaudeDispatch] listener failed: \(error)")
             }
         }
         listener.start(queue: queue)
@@ -237,7 +237,7 @@ private final class Connection {
 
         // 活动流 hook 与决策 hook 使用不同的 URL，避免同一事件被处理两次。
         if let mode = query["mode"] {
-            event["_claude_pulse_mode"] = mode
+            event["_claude_dispatch_mode"] = mode
         }
 
         server.dispatch(
