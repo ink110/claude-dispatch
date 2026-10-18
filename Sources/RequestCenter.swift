@@ -621,11 +621,17 @@ final class RequestCenter {
     // MARK: - 辅助
 
     private func sessionName(for id: String, cwd: String) -> String {
-        if let match = store?.sessions.first(where: { $0.sessionId == id }) {
-            return match.displayName
+        let folder = (cwd as NSString).lastPathComponent
+        let fallback = folder.isEmpty ? String(id.prefix(8)) : "\(folder) · \(String(id.prefix(4)))"
+        guard let match = store?.sessions.first(where: { $0.sessionId == id }) else {
+            return fallback
         }
-        let last = (cwd as NSString).lastPathComponent
-        return last.isEmpty ? String(id.prefix(8)) : last
+        let name = match.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 后台会话生成标题前，注册表会把首条 prompt 当作名字，不适合直接当卡片标题。
+        if name.isEmpty || name.count > 24 || name.contains("\n") {
+            return fallback
+        }
+        return name
     }
 
     private func parseQuestions(_ raw: Any?) -> [QuestionItem] {
