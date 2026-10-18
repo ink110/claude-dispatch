@@ -28,6 +28,7 @@ final class MenuBarController {
             button.action = #selector(togglePopover)
             button.toolTip = "Claude Pulse · 观测所有 Claude Code 会话"
         }
+        content.onOpenTask = { [weak self] in self?.popover.performClose(nil) }
         refresh()
     }
 
@@ -85,6 +86,9 @@ final class MenuBarController {
 // MARK: - 状态面板
 
 final class StatusViewController: NSViewController {
+    /// 点击任务行后立即收起面板，避免看起来「点了没反应」。
+    var onOpenTask: (() -> Void)?
+
     private let store: SessionStore
     private let center: RequestCenter
     private let agents: TaskStore
@@ -429,11 +433,10 @@ final class StatusViewController: NSViewController {
     }
 
     private func open(_ task: TaskItem) {
-        if task.pending {
-            // 从展开面板召回这张卡：如果它在队列里，先切过去再置顶。
-            center.focus(sessionId: task.sessionId)
-            return
-        }
+        // 先收起面板：交互反馈要立刻发生，后台动作再慢慢做。
+        onOpenTask?()
+        // 有存活卡片就召回；没有（例如后台任务已 block、hook 已断开）就 attach 进终端。
+        if task.pending, center.focus(sessionId: task.sessionId) { return }
         TerminalLauncher.openTask(attachId: task.attachId, name: task.name)
     }
 }

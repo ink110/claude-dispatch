@@ -69,14 +69,17 @@ final class RequestCenter {
     }
 
     /// 从展开面板召回某个会话的确认卡：若在队列里，先切过去再置顶。
-    func focus(sessionId: String) {
+    /// 返回 false 表示没有存活的 hook 请求（例如后台会话已被 block），调用方应改为 attach。
+    @discardableResult
+    func focus(sessionId: String) -> Bool {
         if let active, active.sessionId == sessionId {
             focusActive()
-            return
+            return true
         }
-        guard let request = queue.first(where: { $0.sessionId == sessionId }) else { return }
+        guard let request = queue.first(where: { $0.sessionId == sessionId }) else { return false }
         switchTo(id: request.id)
         focusActive()
+        return true
     }
 
     var pendingSessionIds: Set<String> {

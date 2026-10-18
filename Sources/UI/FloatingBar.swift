@@ -208,6 +208,7 @@ final class FloatingBarController {
         if pin { pinned = true }
         if expandedPanel == nil {
             let controller = StatusViewController(store: store, center: center, agents: agents)
+            controller.onOpenTask = { [weak self] in self?.hideExpanded() }
             let panel = PulsePanel(
                 contentRect: NSRect(x: 0, y: 0, width: 392, height: 420),
                 styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],

@@ -5,20 +5,26 @@ import AppKit
 /// - 如果 Terminal 里已经有 `claude agents` 窗口，就在同一个窗口新开一个标签页；
 /// - 进入任务后，Claude Code 原生支持按 ← 回到 agents 列表。
 enum TerminalLauncher {
+    /// AppleScript 和 ps 都可能卡住（Terminal 无响应、等待自动化授权），
+    /// 一律放到后台串行队列，避免主线程冻结导致面板点不动。
+    private static let queue = DispatchQueue(label: "com.claudepulse.terminal", qos: .userInitiated)
+
     static func openTask(attachId: String?, name: String) {
         debugLog("openTask attachId=\(attachId ?? "nil") name=\(name)")
         guard let attachId, !attachId.isEmpty else {
-            activateTerminal()
+            DispatchQueue.main.async { activateTerminal() }
             return
         }
 
         let safeId = attachId.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
         guard !safeId.isEmpty else {
-            activateTerminal()
+            DispatchQueue.main.async { activateTerminal() }
             return
         }
 
-        openInTerminal(command: "claude attach \(safeId)", title: name)
+        queue.async {
+            openInTerminal(command: "claude attach \(safeId)", title: name)
+        }
     }
 
     private static func openInTerminal(command: String, title: String) {
@@ -45,19 +51,21 @@ enum TerminalLauncher {
         }
 
         let script = """
-        tell application "Terminal"
-            activate
-            \(targetScript)
-            if targetWindow is not missing value then
-                set index of targetWindow to 1
-                set newTab to do script \(commandLiteral) in targetWindow
-            else
-                set newTab to do script \(commandLiteral)
-            end if
-            try
-                set custom title of newTab to \(titleLiteral)
-            end try
-        end tell
+        with timeout of 10 seconds
+            tell application "Terminal"
+                activate
+                \(targetScript)
+                if targetWindow is not missing value then
+                    set index of targetWindow to 1
+                    set newTab to do script \(commandLiteral) in targetWindow
+                else
+                    set newTab to do script \(commandLiteral)
+                end if
+                try
+                    set custom title of newTab to \(titleLiteral)
+                end try
+            end tell
+        end timeout
         """
 
         var errorInfo: NSDictionary?
