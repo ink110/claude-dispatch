@@ -71,6 +71,14 @@ struct CompletedSession {
     let completedAt: Date
 }
 
+/// 确认卡头部的会话 chip：点击可在多个等待请求之间切换。
+struct RequestChip {
+    let id: String
+    let label: String
+    let kind: RequestKind
+    let urgent: Bool
+}
+
 /// 一次等待用户处理的请求（权限 / 提问 / 计划）
 struct PendingRequest {
     let id: String
@@ -87,6 +95,9 @@ struct PendingRequest {
     let hasSuggestions: Bool
     let receivedAt: Date
     let rawEvent: [String: Any]
+    /// 后台会话没有可回落的终端窗口，超时策略和按钮文案都不同。
+    let isBackground: Bool
+    let attachId: String?
     /// 回写 hook 结果：success=false 表示主动放弃，让 Claude Code 回落终端弹窗
     let respond: (_ body: [String: Any]?, _ success: Bool) -> Void
 

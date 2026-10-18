@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.center.handle(event: event, respond: respond, registerCancel: registerCancel)
                 }
             }
+            server.statusProvider = { [weak self] in self?.center.snapshotData() }
             try server.start()
             self.server = server
         } catch {
@@ -26,6 +27,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.start()
         agents.start()
         center.store = store
+        center.dataDegradedProvider = { [weak self] in self?.agents.isDegraded ?? false }
+        center.healthProvider = { HookHealth.check() }
+        center.backgroundProvider = { [weak self] sessionId in
+            guard let self else { return false }
+            if let record = self.store.sessions.first(where: { $0.sessionId == sessionId }) {
+                return record.isBackground
+            }
+            return self.agents.items.first(where: { $0.sessionId == sessionId })?.isBackground ?? false
+        }
         menuBar = MenuBarController(store: store, center: center, agents: agents)
         floatingBar = FloatingBarController(store: store, center: center, agents: agents)
         floatingBar?.start()

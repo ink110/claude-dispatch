@@ -5,10 +5,15 @@ import QuartzCore
 /// 默认只显示中文描述和需要你做的动作；原始命令收在「查看技术细节」里。
 /// 非激活面板，不抢终端焦点；点击后才进入输入状态。
 final class RequestPanelController: NSWindowController {
+    let requestId: String
     private let request: PendingRequest
-    private let queueRemaining: Int
     private let anchor: NSRect?
+    private let onSelect: (String) -> Void
     private let onAction: (UserAction) -> Void
+
+    private var chips: [RequestChip]
+    private var activeChipId: String
+    private let chipsStack = NSStackView()
 
     private var selections: [Int: Set<String>] = [:]
     private var optionButtons: [Int: [NSButton]] = [:]
@@ -21,13 +26,18 @@ final class RequestPanelController: NSWindowController {
 
     init(
         request: PendingRequest,
-        queueRemaining: Int,
+        chips: [RequestChip],
+        activeId: String,
         anchor: NSRect?,
+        onSelect: @escaping (String) -> Void,
         onAction: @escaping (UserAction) -> Void
     ) {
+        self.requestId = request.id
         self.request = request
-        self.queueRemaining = queueRemaining
+        self.chips = chips
+        self.activeChipId = activeId
         self.anchor = anchor
+        self.onSelect = onSelect
         self.onAction = onAction
 
         let panel = PulsePanel(
@@ -39,7 +49,8 @@ final class RequestPanelController: NSWindowController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.level = .statusBar
+        // 确认卡必须高于脉搏条展开面板，避免互相遮挡。
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         // 确认卡上的按钮必须能用真实鼠标点中；固定在锚点位置，不靠拖动背景移动。
@@ -56,10 +67,26 @@ final class RequestPanelController: NSWindowController {
 
     func show() {
         guard let panel = window as? NSPanel else { return }
+        relayout()
+        panel.orderFrontRegardless()
+    }
+
+    func hide() {
+        window?.orderOut(nil)
+    }
+
+    func updateChips(_ chips: [RequestChip], activeId: String) {
+        self.chips = chips
+        self.activeChipId = activeId
+        rebuildChipButtons()
+        relayout()
+    }
+
+    private func relayout() {
+        guard let panel = window as? NSPanel else { return }
         rootStack.layoutSubtreeIfNeeded()
         panel.setContentSize(NSSize(width: 440, height: rootStack.fittingSize.height + 32))
         position(panel)
-        panel.orderFrontRegardless()
     }
 
     // MARK: - 提醒升级
@@ -85,7 +112,7 @@ final class RequestPanelController: NSWindowController {
     }
 
     func raiseToFront() {
-        window?.level = .statusBar
+        window?.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         window?.orderFrontRegardless()
     }
 
@@ -129,6 +156,13 @@ final class RequestPanelController: NSWindowController {
         rootStack = stack
 
         stack.addArrangedSubview(makeHeader())
+
+        chipsStack.orientation = .horizontal
+        chipsStack.alignment = .centerY
+        chipsStack.spacing = 6
+        stack.addArrangedSubview(chipsStack)
+        rebuildChipButtons()
+
         stack.addArrangedSubview(makeSessionLine())
 
         switch request.kind {
@@ -188,11 +222,11 @@ final class RequestPanelController: NSWindowController {
         row.addArrangedSubview(titleLabel)
         row.addArrangedSubview(Theme.spacer())
 
-        if queueRemaining > 0 {
-            row.addArrangedSubview(Theme.label("还有 \(queueRemaining) 个", size: 10.5, color: .secondaryLabelColor))
-        }
-
-        let fallback = NSButton(title: "转回终端", target: self, action: #selector(fallbackTapped))
+        let fallback = NSButton(
+            title: request.isBackground ? "在终端打开" : "转回终端",
+            target: self,
+            action: #selector(fallbackTapped)
+        )
         fallback.isBordered = false
         fallback.contentTintColor = .secondaryLabelColor
         fallback.font = .systemFont(ofSize: 10.5)
@@ -200,6 +234,48 @@ final class RequestPanelController: NSWindowController {
         fallback.keyEquivalentModifierMask = []
         row.addArrangedSubview(fallback)
         return row
+    }
+
+    // MARK: - 队列 chips
+
+    private func rebuildChipButtons() {
+        for view in chipsStack.arrangedSubviews {
+            chipsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        // 只有一张卡时不显示 chips，避免占用视觉空间。
+        chipsStack.isHidden = chips.count <= 1
+        for chip in chips {
+            let isActive = chip.id == activeChipId
+            let color: NSColor = chip.urgent
+                ? .systemRed
+                : (isActive ? .controlAccentColor : .secondaryLabelColor)
+            let font = NSFont.systemFont(ofSize: 10.5, weight: isActive ? .semibold : .regular)
+            let button = ChipButton(title: chipLabel(chip.label), target: self, action: #selector(chipTapped(_:)))
+            button.identifier = NSUserInterfaceItemIdentifier(chip.id)
+            button.isBordered = false
+            button.attributedTitle = NSAttributedString(
+                string: chipLabel(chip.label),
+                attributes: [.foregroundColor: color, .font: font]
+            )
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 9
+            button.layer?.backgroundColor = (isActive
+                ? NSColor.controlAccentColor.withAlphaComponent(0.16)
+                : NSColor.secondaryLabelColor.withAlphaComponent(0.10)).cgColor
+            chipsStack.addArrangedSubview(button)
+        }
+    }
+
+    @objc private func chipTapped(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        onSelect(id)
+    }
+
+    private func chipLabel(_ label: String) -> String {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "未命名" }
+        return trimmed.count <= 10 ? trimmed : String(trimmed.prefix(9)) + "…"
     }
 
     private func makeSessionLine() -> NSView {
@@ -302,23 +378,16 @@ final class RequestPanelController: NSWindowController {
             }
 
             for (optionIndex, option) in question.options.enumerated() {
-                let button = NSButton(
+                // 自绘选项行：不用 AppKit 的 radio/switch，避免同一 superview 里的
+                // 多个问题被当成一组单选；选中态完全由 selections 字典驱动。
+                let row = OptionRowButton(
                     title: option.detail.isEmpty ? option.label : "\(option.label)  —  \(option.detail)",
+                    tag: index * 1000 + optionIndex,
                     target: self,
                     action: #selector(optionTapped(_:))
                 )
-                button.tag = index * 1000 + optionIndex
-                button.alignment = .left
-                button.font = .systemFont(ofSize: 12)
-                button.bezelStyle = .rounded
-                (button.cell as? NSButtonCell)?.usesSingleLineMode = false
-                (button.cell as? NSButtonCell)?.wraps = true
-                button.translatesAutoresizingMaskIntoConstraints = false
-                button.widthAnchor.constraint(equalToConstant: 404).isActive = true
-                // 单选使用 radio 语义，多选使用 checkbox 语义，辅助功能也能正确朗读。
-                button.setButtonType(question.multiSelect ? .switch : .radio)
-                stack.addArrangedSubview(button)
-                optionButtons[index, default: []].append(button)
+                stack.addArrangedSubview(row)
+                optionButtons[index, default: []].append(row)
             }
 
             let field = NSTextField()
@@ -415,10 +484,11 @@ final class RequestPanelController: NSWindowController {
     }
 
     private var keyboardHint: String {
+        let esc = request.isBackground ? "Esc 在终端打开" : "Esc 转回终端"
         switch request.kind {
-        case .permission: return "⌘↩ 允许执行 · Esc 转回终端"
-        case .plan: return "⌘↩ 批准计划 · Esc 转回终端"
-        case .question: return "⌘↩ 提交回答 · Esc 转回终端"
+        case .permission: return "⌘↩ 允许执行 · \(esc)"
+        case .plan: return "⌘↩ 批准计划 · \(esc)"
+        case .question: return "⌘↩ 提交回答 · \(esc)"
         }
     }
 
@@ -536,12 +606,20 @@ final class RequestPanelController: NSWindowController {
             var current = selections[questionIndex] ?? []
             if current.contains(label) { current.remove(label) } else { current.insert(label) }
             selections[questionIndex] = current
-            sender.state = current.contains(label) ? .on : .off
         } else {
             selections[questionIndex] = [label]
-            for (index, button) in (optionButtons[questionIndex] ?? []).enumerated() {
-                button.state = index == optionIndex ? .on : .off
-            }
+        }
+        refreshOptionRows(questionIndex)
+    }
+
+    /// 选中态只由 selections 字典决定，每个问题各刷各的，互不影响。
+    private func refreshOptionRows(_ questionIndex: Int) {
+        let question = request.questions[questionIndex]
+        let chosen = selections[questionIndex] ?? []
+        for (optionIndex, button) in (optionButtons[questionIndex] ?? []).enumerated() {
+            guard optionIndex < question.options.count else { continue }
+            let label = question.options[optionIndex].label
+            (button as? OptionRowButton)?.setChosen(chosen.contains(label))
         }
     }
 
@@ -567,7 +645,7 @@ final class RequestPanelController: NSWindowController {
         for (index, question) in request.questions.enumerated() {
             let selected = Array(selections[index] ?? []).sorted()
             let typed = freeTextFields[index]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let answer = typed.isEmpty ? selected.joined(separator: "、") : typed
+            let answer = typed.isEmpty ? selected.joined(separator: ", ") : typed
             guard !answer.isEmpty else {
                 NSSound.beep()
                 freeTextFields[index]?.becomeFirstResponder()
@@ -590,7 +668,8 @@ final class RequestPanelController: NSWindowController {
     }
 
     @objc private func fallbackTapped() {
-        onAction(.fallback)
+        // 交互式会话回落到终端原生提示；后台会话先释放 hook 再 attach 进入任务。
+        onAction(request.isBackground ? .attach : .fallback)
         close()
     }
 }
@@ -639,5 +718,77 @@ private final class PillButton: NSButton {
         layer?.backgroundColor = highlightColor.cgColor
         super.mouseDown(with: event)
         layer?.backgroundColor = normalColor.cgColor
+    }
+}
+
+/// 卡片头部的会话 chip：比操作按钮更小，整块可点，紧急状态由文字颜色体现。
+private final class ChipButton: NSButton {
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: size.width + 18, height: 22)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// 自绘选项行：整行可点、选中态由代码维护，避免 NSButton radio 跨问题联动。
+private final class OptionRowButton: NSButton {
+    private let titleText: String
+    private var chosen = false
+
+    init(title: String, tag: Int, target: AnyObject?, action: Selector?) {
+        titleText = title
+        super.init(frame: .zero)
+        self.tag = tag
+        self.target = target
+        self.action = action
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.borderWidth = 1
+        focusRingType = .none
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: 404).isActive = true
+        heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
+        applyStyle()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setChosen(_ value: Bool) {
+        guard chosen != value else { return }
+        chosen = value
+        applyStyle()
+    }
+
+    private func applyStyle() {
+        layer?.backgroundColor = (chosen
+            ? NSColor.controlAccentColor.withAlphaComponent(0.14)
+            : NSColor.secondaryLabelColor.withAlphaComponent(0.06)).cgColor
+        layer?.borderColor = (chosen
+            ? NSColor.controlAccentColor.withAlphaComponent(0.55)
+            : NSColor.separatorColor.withAlphaComponent(0.5)).cgColor
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.firstLineHeadIndent = 12
+        paragraph.headIndent = 12
+        paragraph.lineBreakMode = .byTruncatingTail
+        attributedTitle = NSAttributedString(
+            string: titleText,
+            attributes: [
+                .foregroundColor: chosen ? NSColor.controlAccentColor : NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 12, weight: chosen ? .semibold : .regular),
+                .paragraphStyle: paragraph
+            ]
+        )
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+        super.mouseDown(with: event)
+        applyStyle()
     }
 }
