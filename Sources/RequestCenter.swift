@@ -46,6 +46,12 @@ final class RequestCenter {
             return
         }
 
+        // ExitPlanMode 的终端确认不经过 PermissionRequest，必须用 PreToolUse 接管。
+        if hookName == "PreToolUse" && toolName == "ExitPlanMode" {
+            enqueue(event: event, kind: .plan, toolName: toolName, respond: respond)
+            return
+        }
+
         // 非阻塞事件：更新状态、提示完成，然后立刻放行。
         if hookName == "Stop" {
             notifyFinished(event)
@@ -145,30 +151,54 @@ final class RequestCenter {
         var body: [String: Any]?
         var success = true
 
+        let isPreToolUse = request.rawEvent["hook_event_name"] as? String == "PreToolUse"
+
         switch (request.kind, action) {
         case (.permission, .allow(let always)), (.plan, .allow(let always)):
-            var decision: [String: Any] = ["behavior": "allow"]
-            if always,
-               let suggestions = request.rawEvent["permission_suggestions"] as? [[String: Any]],
-               !suggestions.isEmpty {
-                decision["updatedPermissions"] = suggestions
-            }
-            body = [
-                "hookSpecificOutput": [
-                    "hookEventName": "PermissionRequest",
-                    "decision": decision
+            if isPreToolUse {
+                // ExitPlanMode：echo 原始输入并允许，跳过终端计划确认。
+                body = [
+                    "hookSpecificOutput": [
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "allow",
+                        "updatedInput": request.rawEvent["tool_input"] as? [String: Any] ?? [:]
+                    ]
                 ]
-            ]
+            } else {
+                var decision: [String: Any] = ["behavior": "allow"]
+                if always,
+                   let suggestions = request.rawEvent["permission_suggestions"] as? [[String: Any]],
+                   !suggestions.isEmpty {
+                    decision["updatedPermissions"] = suggestions
+                }
+                body = [
+                    "hookSpecificOutput": [
+                        "hookEventName": "PermissionRequest",
+                        "decision": decision
+                    ]
+                ]
+            }
 
         case (.permission, .deny(let message)), (.plan, .deny(let message)):
-            var decision: [String: Any] = ["behavior": "deny"]
-            if let message, !message.isEmpty { decision["message"] = message }
-            body = [
-                "hookSpecificOutput": [
-                    "hookEventName": "PermissionRequest",
-                    "decision": decision
+            if isPreToolUse {
+                var output: [String: Any] = [
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny"
                 ]
-            ]
+                if let message, !message.isEmpty {
+                    output["permissionDecisionReason"] = message
+                }
+                body = ["hookSpecificOutput": output]
+            } else {
+                var decision: [String: Any] = ["behavior": "deny"]
+                if let message, !message.isEmpty { decision["message"] = message }
+                body = [
+                    "hookSpecificOutput": [
+                        "hookEventName": "PermissionRequest",
+                        "decision": decision
+                    ]
+                ]
+            }
 
         case (.question, .answer(let answers)):
             var updatedInput = request.rawEvent["tool_input"] as? [String: Any] ?? [:]

@@ -129,3 +129,4 @@ CLAUDE_PULSE_TIMEOUT=120 ~/Applications/ClaudePulse.app/Contents/MacOS/ClaudePul
 - 只覆盖「工具调用需要的信息」：权限、Claude 的提问、计划批准。任务空闲时想凭空给 Claude 发一条消息，不在本工具范围内。
 - 同一时间只显示一张确认卡片，多个请求按到达顺序排队，避免多窗口干扰。
 - `AskUserQuestion` 的回答格式是官方 hook 协议；DeepSeek 模型是否调用这个工具取决于它自己的行为。
+- **计划批准是尽力而为**：当前 Claude Code 版本里，`ExitPlanMode` 的确认有时由终端 TUI 自己处理（「Ready to code?」），不经过 hook；这种情况下仍回落到终端，浮层不会出现。权限确认和提问不受影响。本工具已经注册了官方的 `PreToolUse → ExitPlanMode` 钩子，在会走 hook 的版本/模式里可直接在浮层批准。

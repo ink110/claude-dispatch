@@ -18,6 +18,8 @@ fi
 
 # 2. 安装 App（放到 ~/Applications，不需要管理员权限）
 mkdir -p "$HOME/Applications"
+pkill -f "ClaudePulse.app/Contents/MacOS/ClaudePulse" 2>/dev/null || true
+sleep 0.5
 rm -rf "$APP_DEST"
 cp -R "$ROOT/build/ClaudePulse.app" "$APP_DEST"
 
@@ -49,7 +51,8 @@ jq --arg url "$URL" '
   .hooks.PermissionRequest = (((.hooks.PermissionRequest // []) | strip_cp)
     + [{hooks: [{type: "http", url: $url, timeout: 3600}]}]) |
   .hooks.PreToolUse = (((.hooks.PreToolUse // []) | strip_cp)
-    + [{matcher: "AskUserQuestion", hooks: [{type: "http", url: $url, timeout: 3600}]}]) |
+    + [{matcher: "AskUserQuestion", hooks: [{type: "http", url: $url, timeout: 3600}]}]
+    + [{matcher: "ExitPlanMode", hooks: [{type: "http", url: $url, timeout: 3600}]}]) |
   .hooks.Stop = (((.hooks.Stop // []) | strip_cp)
     + [{hooks: [{type: "http", url: $url, timeout: 10}]}]) |
   .hooks.Notification = (((.hooks.Notification // []) | strip_cp)
