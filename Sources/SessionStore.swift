@@ -83,7 +83,20 @@ final class SessionStore {
         activities[sessionId] = activity
     }
 
-    func recordDone(sessionId: String) {
+    /// Stop hook：一轮回复结束，会话还在。只更新活动，不打扰、不弹提示。
+    func recordTurnEnd(sessionId: String) {
+        guard !sessionId.isEmpty else { return }
+        var activity = activities[sessionId] ?? SessionActivity()
+        activity.currentTool = nil
+        activity.currentSummary = nil
+        activity.currentRaw = nil
+        activity.lastEventAt = Date()
+        activity.lastEventSummary = activity.lastEventSummary == "任务完成" ? "任务完成" : "刚完成一轮"
+        activities[sessionId] = activity
+    }
+
+    /// 会话真正结束（SessionEnd / agent_completed）：清等待标记，标记完成。
+    func recordSessionEnd(sessionId: String) {
         guard !sessionId.isEmpty else { return }
         var activity = activities[sessionId] ?? SessionActivity()
         activity.currentTool = nil

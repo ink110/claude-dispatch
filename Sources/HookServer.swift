@@ -3,11 +3,17 @@ import Network
 
 enum HookHTTPResult {
     case json([String: Any])
+    /// 2xx 空 body：成功、无决策，不参与多 hook 合并（活动流与非决策事件用）。
+    case empty
     case fail
 }
 
 /// 只监听 127.0.0.1 的极小 HTTP 服务，用来接收 Claude Code hooks。
-/// 每个请求都校验 token；阻塞型请求会一直保持连接，直到用户在浮层上做出选择。
+///
+/// 线程模型（务必遵守）：
+/// - 所有连接可变状态（解析缓冲、responded、cancelHandlers）只在 `queue` 上读写；
+/// - App 层（主线程）拿到的 respond 闭包可以任意线程调用，本类负责切回 `queue`；
+/// - 绝不在 queue 之外触碰 NWConnection 的 send/receive/cancel。
 final class HookServer {
     typealias EventHandler = (
         [String: Any],
@@ -18,6 +24,8 @@ final class HookServer {
     private let port: UInt16
     private let token: String
     private let onEvent: EventHandler
+    /// GET /status 的数据源。必须在任意线程安全（内部自带锁），因为在 `queue` 上被调用。
+    var statusProvider: (() -> Data?)?
     fileprivate let queue = DispatchQueue(label: "com.ink.claudepulse.http")
     private var listener: NWListener?
     private let connectionLock = NSLock()
@@ -78,6 +86,10 @@ final class HookServer {
         if let auth = headers["authorization"], auth == "Bearer \(token)" { return true }
         return false
     }
+
+    fileprivate func statusSnapshot() -> Data? {
+        statusProvider?()
+    }
 }
 
 // MARK: - 单个连接
@@ -85,17 +97,18 @@ final class HookServer {
 private final class Connection {
     private let nw: NWConnection
     private unowned let server: HookServer
+
+    // 以下所有可变状态只在 server.queue 上读写。
     private var buffer = Data()
     private var headersDone = false
     private var contentLength = 0
     private var responded = false
+    private var disposed = false
+    private var cancelHandlers: [() -> Void] = []
     private var method = ""
     private var path = ""
     private var query: [String: String] = [:]
     private var headers: [String: String] = [:]
-    private let cancelLock = NSLock()
-    private var cancelHandlers: [() -> Void] = []
-    private var disposed = false
 
     private static let headerTerminator = Data("\r\n\r\n".utf8)
 
@@ -184,6 +197,24 @@ private final class Connection {
     }
 
     private func handle(body: Data) {
+        // 排障端点：GET /status 返回 App 状态快照（只读）。
+        if path == "/status" {
+            guard method == "GET" else {
+                respondJSON(status: 405, object: ["error": "method not allowed"])
+                return
+            }
+            guard server.isAuthorized(query: query, headers: headers) else {
+                respondJSON(status: 401, object: ["error": "unauthorized"])
+                return
+            }
+            if let snapshot = server.statusSnapshot() {
+                respondRaw(status: 200, contentType: "application/json", body: snapshot)
+            } else {
+                respondJSON(status: 503, object: ["error": "status unavailable"])
+            }
+            return
+        }
+
         guard method == "POST" else {
             respondJSON(status: 405, object: ["error": "method not allowed"])
             return
@@ -213,53 +244,65 @@ private final class Connection {
             event: event,
             respond: { [weak self] result in
                 guard let self else { return }
-                switch result {
-                case .json(let payload):
-                    self.respondJSON(status: 200, object: payload)
-                case .fail:
-                    // 非 2xx 会让 hook 失效，Claude Code 自动回落到终端原生弹窗。
-                    self.respondJSON(status: 500, object: ["error": "no answer; fall back to terminal"])
+                // App 层可能在主线程调用；统一切回连接队列再写 socket。
+                self.server.queue.async {
+                    self.apply(result)
                 }
             },
             registerCancel: { [weak self] handler in
-                self?.registerCancel(handler)
+                guard let self else { return }
+                // 注册也要在连接队列上落地，保证与 fireCancel 的先后关系可判定：
+                // 已断开（disposed）则立即触发清理，否则登记等断开时触发。
+                self.server.queue.async {
+                    self.registerCancelOnQueue(handler)
+                }
             }
         )
     }
 
-    private func registerCancel(_ handler: @escaping () -> Void) {
-        cancelLock.lock()
-        if disposed {
-            cancelLock.unlock()
-            handler()
-            return
+    private func apply(_ result: HookHTTPResult) {
+        switch result {
+        case .json(let payload):
+            respondJSON(status: 200, object: payload)
+        case .empty:
+            respondRaw(status: 200, contentType: "application/json", body: Data())
+        case .fail:
+            // 非 2xx 会让 hook 失效，Claude Code 自动回落到终端原生确认。
+            respondJSON(status: 500, object: ["error": "no answer; fall back to terminal"])
         }
-        cancelHandlers.append(handler)
-        cancelLock.unlock()
+    }
+
+    private func registerCancelOnQueue(_ handler: @escaping () -> Void) {
+        if disposed {
+            handler()
+        } else {
+            cancelHandlers.append(handler)
+        }
     }
 
     private func fireCancelIfNeeded() {
-        guard !responded else { return }
-        fireCancel()
-    }
-
-    private func fireCancel() {
-        cancelLock.lock()
+        guard !responded, !disposed else { return }
+        disposed = true
         let handlers = cancelHandlers
         cancelHandlers.removeAll()
-        disposed = true
-        cancelLock.unlock()
         handlers.forEach { $0() }
     }
 
     private func respondJSON(status: Int, object: [String: Any]) {
+        let body = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
+        respondRaw(status: status, contentType: "application/json", body: body)
+    }
+
+    private func respondRaw(status: Int, contentType: String, body: Data) {
         guard !responded else { return }
         responded = true
 
-        let body = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
-        let reason = status == 200 ? "OK" : (status == 401 ? "Unauthorized" : (status == 404 ? "Not Found" : "Internal Server Error"))
+        let reason = status == 200 ? "OK"
+            : (status == 401 ? "Unauthorized"
+            : (status == 404 ? "Not Found"
+            : (status == 405 ? "Method Not Allowed" : "Internal Server Error")))
         let head = "HTTP/1.1 \(status) \(reason)\r\n"
-            + "Content-Type: application/json\r\n"
+            + "Content-Type: \(contentType)\r\n"
             + "Content-Length: \(body.count)\r\n"
             + "Connection: close\r\n\r\n"
         var out = Data(head.utf8)

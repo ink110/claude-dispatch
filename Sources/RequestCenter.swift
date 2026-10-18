@@ -46,7 +46,7 @@ final class RequestCenter {
         let sessionId = event["session_id"] as? String ?? ""
         let input = event["tool_input"] as? [String: Any] ?? [:]
 
-        // 活动流 hook：只记录「在干嘛」，不参与决策，立即放行。
+        // 活动流 hook：只记录「在干嘛」，不参与决策，立即放行（空 body = 无决策）。
         if mode == "activity" {
             if hookName == "PreToolUse" {
                 store?.recordPreTool(sessionId: sessionId, toolName: toolName, input: input)
@@ -55,7 +55,7 @@ final class RequestCenter {
             }
             store?.refresh()
             onChange?()
-            respond(.json(["continue": true]))
+            respond(.empty)
             return
         }
 
@@ -81,7 +81,7 @@ final class RequestCenter {
             store?.recordPreTool(sessionId: sessionId, toolName: toolName, input: input)
             store?.refresh()
             onChange?()
-            respond(.json(["continue": true]))
+            respond(.empty)
             return
         }
 
@@ -89,24 +89,35 @@ final class RequestCenter {
             store?.recordPostTool(sessionId: sessionId, toolName: toolName, input: input)
             store?.refresh()
             onChange?()
-            respond(.json(["continue": true]))
+            respond(.empty)
             return
         }
 
-        // 非阻塞事件：更新状态、提示完成，然后立刻放行。
+        // 非阻塞事件：只更新状态，空 body 放行。
+        // Stop 是「一轮回复结束」，不是任务完成——每个回合弹提示只会变成噪音。
         if hookName == "Stop" {
-            store?.recordDone(sessionId: sessionId)
-            notifyFinished(event)
+            store?.recordTurnEnd(sessionId: sessionId)
+        } else if hookName == "SessionStart" {
+            store?.clearAttention(sessionId: sessionId)
+        } else if hookName == "SessionEnd" {
+            store?.recordSessionEnd(sessionId: sessionId)
         } else if hookName == "Notification" {
             let type = event["notification_type"] as? String ?? ""
-            if type == "idle_prompt" || type == "agent_needs_input" {
+            switch type {
+            case "idle_prompt", "agent_needs_input":
                 store?.markAttention(sessionId: sessionId, label: "等你输入")
                 notifyWaiting(event)
+            case "agent_completed":
+                // 后台任务真正完成的信号，只有它才弹「已完成」。
+                store?.recordSessionEnd(sessionId: sessionId)
+                notifyFinished(event)
+            default:
+                break
             }
         }
         store?.refresh()
         onChange?()
-        respond(.json(["continue": true]))
+        respond(.empty)
     }
 
     // MARK: - 入队与展示

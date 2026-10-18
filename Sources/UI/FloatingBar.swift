@@ -14,7 +14,7 @@ final class FloatingBarController {
     private var hideWork: DispatchWorkItem?
     private var hoverTimer: Timer?
     private var healthTimer: Timer?
-    private var healthy = true
+    private var health: HookHealthLevel = .ok
     private var pinned = false
 
     /// 确认卡会挂在这个区域下方。
@@ -49,11 +49,11 @@ final class FloatingBarController {
 
         barView.onClick = { [weak self] in
             guard let self else { return }
-            pulseLog("bar onClick healthy=\(self.healthy)")
-            if self.healthy {
-                self.toggleExpanded()
-            } else {
+            pulseLog("bar onClick health=\(self.health)")
+            if case .broken = self.health {
                 self.repairHooks()
+            } else {
+                self.toggleExpanded()
             }
         }
         barView.onHover = { [weak self] inside in
@@ -110,10 +110,10 @@ final class FloatingBarController {
             completed: completed,
             idle: idle,
             total: tasks.count,
-            healthy: healthy
+            health: health
         )
 
-        if !tasks.isEmpty || !healthy {
+        if !tasks.isEmpty || health != .ok {
             compactPanel.orderFrontRegardless()
         } else {
             compactPanel.orderOut(nil)
@@ -274,14 +274,13 @@ final class FloatingBarController {
     // MARK: - 提醒失效检查
 
     private func checkHealth() {
-        let ok = HookHealth.isHealthy()
-        healthy = ok
+        health = HookHealth.check()
         refresh()
     }
 
     private func repairHooks() {
-        if HookInstaller.repair() {
-            healthy = HookHealth.isHealthy()
+        if HookInstaller.install() {
+            health = HookHealth.check()
             refresh()
             ToastPanelController.shared.show(
                 title: "提醒已修复",
@@ -308,6 +307,8 @@ private final class FloatingBarView: NSVisualEffectView {
 
     private let icon = StatusIconView(size: 14)
     private let label = NSTextField(labelWithString: "")
+    /// 活动流 hooks 缺失时显示的黄点（降级提示），不占用状态文案。
+    private let degradedDot = Theme.dot(color: .systemOrange, size: 6)
     private var tracking: NSTrackingArea?
     private var dragStart: NSPoint?
     private var windowStart: NSPoint?
@@ -333,11 +334,12 @@ private final class FloatingBarView: NSVisualEffectView {
         setAccessibilityLabel("Claude Pulse 任务状态")
         setAccessibilityHelp("点击展开任务列表")
 
-        let stack = NSStackView(views: [icon, label])
+        let stack = NSStackView(views: [icon, label, degradedDot])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 14, bottom: 0, right: 12)
+        degradedDot.isHidden = true
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -358,8 +360,16 @@ private final class FloatingBarView: NSVisualEffectView {
         completed: Int,
         idle: Int,
         total: Int,
-        healthy: Bool
+        health: HookHealthLevel
     ) {
+        // 决策 hooks 挂了 = 工具失去了核心能力，整条脉搏条只说这一件事。
+        if case .broken = health {
+            icon.configure(state: .needsInput)
+            label.stringValue = "提醒服务异常 · 点击修复"
+            degradedDot.isHidden = true
+            return
+        }
+
         let state: TaskState
         let text: String
 
@@ -384,7 +394,8 @@ private final class FloatingBarView: NSVisualEffectView {
         }
 
         icon.configure(state: state)
-        label.stringValue = healthy ? text : "\(text) · 点击修复"
+        label.stringValue = text
+        degradedDot.isHidden = health != .degraded
     }
 
     /// 让整条脉搏条都能响应点击，而不只是背景区域。

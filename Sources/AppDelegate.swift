@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
-            let token = try loadOrCreateToken()
+            let token = try TokenStore.loadOrCreate()
             let server = HookServer(port: AppConfig.port, token: token) { [weak self] event, respond, registerCancel in
                 DispatchQueue.main.async {
                     self?.center.handle(event: event, respond: respond, registerCancel: registerCancel)
@@ -56,22 +56,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.stop()
         agents.stop()
         server?.stop()
-    }
-
-    private func loadOrCreateToken() throws -> String {
-        let fm = FileManager.default
-        try fm.createDirectory(at: AppConfig.stateDir, withIntermediateDirectories: true)
-
-        if let data = try? Data(contentsOf: AppConfig.tokenFile),
-           let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !token.isEmpty {
-            return token
-        }
-
-        let token = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
-        try token.write(to: AppConfig.tokenFile, atomically: true, encoding: .utf8)
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: AppConfig.tokenFile.path)
-        return token
     }
 
     private func showFatal(_ message: String) {
