@@ -49,7 +49,7 @@ Hover or click the bar to expand. Sessions are grouped by state; each row shows 
 - **Waiting for input**: the terminal itself is waiting for typed input, but there is no card to click.
 - **Possibly stuck**: the task is busy but has produced no activity for five minutes.
 - **Running / Completed / Idle**: everything else.
-- Click any row to open its terminal session: background jobs use `claude attach` (even after a turn finishes, as long as the session is alive), interactive sessions focus the matching Terminal tab, and only sessions that have truly ended resume with `claude --resume`. If that session already has a window, Claude Dispatch jumps to it instead of opening a duplicate.
+- Click any row to open its terminal session: background jobs use `claude attach` (even after a turn finishes, as long as the session is alive), interactive sessions focus the matching Terminal tab, and only sessions that have truly ended resume with `claude --resume`. If that session already has a window, Claude Dispatch jumps to it instead of opening a duplicate; if the conversation had exited in that window, it re-attaches in the same tab.
 - Footer: refresh, toggle launch at login, quit.
 
 ### 3. Request cards: permissions, questions, plans

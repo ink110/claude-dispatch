@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.4 — 2026-10-25
+
+### Fixed
+
+- Clicking a task opened a second window when its existing window was still on screen but the conversation had already exited inside it. The window was no longer discoverable in the process table.
+  - Launcher scripts now leave an interactive shell after `claude attach` / `claude --resume`, so their window stays discoverable for as long as it is open.
+  - When the task's window is found but the conversation has exited, Claude Dispatch focuses that window and re-runs `claude attach` in the same tab instead of opening a duplicate. If the tab is running something else (for example the agent view), it only focuses it.
+  - Windows created by earlier versions (without the trailing shell) are remembered once they are focused; after their conversation exits, clicking the task still finds the window by its tty instead of opening a new one. Registrations are dropped when the tab is gone or has been reused by another running process.
+  - Process matching also accepts `claude.exe` as the executable name.
+
 ## 1.1.3 — 2026-10-25
 
 ### Fixed
