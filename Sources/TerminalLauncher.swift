@@ -24,7 +24,7 @@ enum TerminalLauncher {
         sessionId: String? = nil,
         resume: Bool = false
     ) {
-        debugLog("openTask attachId=\(attachId ?? "nil") bg=\(isBackground) pid=\(pid.map(String.init) ?? "nil") resume=\(resume)")
+        debugLog("openTask name=\(name) attachId=\(attachId ?? "nil") bg=\(isBackground) pid=\(pid.map(String.init) ?? "nil") resume=\(resume)")
 
         // 已结束的任务 attach 不到，改为恢复历史对话。
         if resume, let sessionId, !sessionId.isEmpty {

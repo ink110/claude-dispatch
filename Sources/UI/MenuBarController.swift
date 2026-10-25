@@ -181,7 +181,15 @@ final class StatusViewController: NSViewController {
         ])
     }
 
-    func refresh() {
+    func refresh(force: Bool = false) {
+        // 鼠标停在面板上时冻结列表。刷新会重建每一行的视图并重置滚动位置，
+        // 如果正好发生在按下鼠标的瞬间，用户会点到另一条任务（点了 A 却打开 B）。
+        // 用户主动点「刷新」时例外。
+        if !force, let window = view.window, window.isVisible, window.frame.contains(NSEvent.mouseLocation) {
+            return
+        }
+        let previousScroll = scroll.contentView.bounds.origin
+
         for subview in stack.arrangedSubviews {
             stack.removeArrangedSubview(subview)
             subview.removeFromSuperview()
@@ -250,7 +258,10 @@ final class StatusViewController: NSViewController {
         view.setFrameSize(NSSize(width: 392, height: height))
         view.layoutSubtreeIfNeeded()
 
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: 0))
+        // 重建列表时保持滚动位置（任务多时需要往下滚才能看到已完成项）。
+        let documentHeight = scroll.documentView?.frame.height ?? contentHeight
+        let maxScrollY = max(0, documentHeight - scroll.contentView.bounds.height)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: min(previousScroll.y, maxScrollY)))
         scroll.reflectScrolledClipView(scroll.contentView)
     }
 
@@ -448,7 +459,7 @@ final class StatusViewController: NSViewController {
     @objc private func refreshTapped() {
         store.refresh()
         agents.refresh()
-        refresh()
+        refresh(force: true)
     }
 
     @objc private func quitTapped() {
@@ -482,7 +493,9 @@ final class StatusViewController: NSViewController {
             isBackground: task.isBackground,
             pid: task.pid,
             sessionId: task.sessionId,
-            resume: task.state == .completed
+            // 「已完成」只是这一轮跑完，后台会话通常还活着。
+            // 对活着的后台会话执行 `claude --resume` 会被拒绝，必须用 attach 进入它的对话。
+            resume: task.state == .completed && !task.isAttachable
         )
     }
 }

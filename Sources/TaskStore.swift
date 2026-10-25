@@ -70,6 +70,9 @@ struct TaskItem {
     let isBackground: Bool
     /// 交互式会话靠 pid 找到它所在的终端窗口；后台任务用 attachId。
     let pid: Int32?
+    /// 会话还活在 `claude agents` 列表里（进程仍在）：点开应该 attach，而不是 resume。
+    /// resume 只适用于已经结束、只剩本地记录的会话。
+    let isAttachable: Bool
     let state: TaskState
     let startedAt: Date?
     let lastActivity: Date?
@@ -259,6 +262,7 @@ enum TaskBuilder {
                 cwd: item.cwd,
                 isBackground: item.isBackground,
                 pid: item.pid.map(Int32.init),
+                isAttachable: item.pid != nil,
                 state: state,
                 startedAt: item.startedDate,
                 lastActivity: last,
@@ -292,6 +296,7 @@ enum TaskBuilder {
                 cwd: session.cwd,
                 isBackground: session.isBackground,
                 pid: session.pid,
+                isAttachable: session.pid > 0,
                 state: state,
                 startedAt: session.startedDate,
                 lastActivity: activity?.lastEventAt ?? session.lastActivity,
@@ -312,6 +317,8 @@ enum TaskBuilder {
                 cwd: done.cwd,
                 isBackground: done.isBackground,
                 pid: nil,
+                // 已从 `claude agents` 消失：进程不在了，只能 resume。
+                isAttachable: false,
                 state: .completed,
                 startedAt: nil,
                 lastActivity: done.completedAt,

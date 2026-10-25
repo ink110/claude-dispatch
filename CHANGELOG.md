@@ -7,6 +7,8 @@
 - Clicking a task that already has a terminal window now focuses that window instead of opening a duplicate. Background jobs look for a running `claude attach <id>`, finished sessions look for `claude --resume <id>`.
 - Tab focusing can no longer hang: the AppleScript runs in a killable `osascript` subprocess with a hard timeout. In-process `NSAppleScript` blocked indefinitely when called off the main thread.
 - When focusing fails (for example, the automation permission has not been granted yet), the app brings the terminal forward and asks for permission once, rather than opening a second window.
+- A background task whose current turn finished now opens with `claude attach` while its session is still alive. It used to run `claude --resume`, which Claude Code rejects for a live background session.
+- The task list no longer rebuilds or resets its scroll position while the pointer is over it, so a background refresh can no longer move a different task under the click.
 
 ## 1.1.0 — 2026-10-18
 
