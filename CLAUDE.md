@@ -2,7 +2,7 @@
 
 macOS 菜单栏 + 悬浮确认面板，用于观测多个 Claude Code CLI 会话，并在任务需要确认时主动提醒、直接在浮层里批复或补充信息。
 
-公开版本：v1.1.1，MIT 许可证，仓库名 `claude-dispatch`；分发形态为通用二进制 `.app` + zip（ad-hoc 签名，不公证）。
+公开版本：v1.1.2，MIT 许可证，仓库名 `claude-dispatch`；分发形态为通用二进制 `.app` + zip（ad-hoc 签名，不公证）。
 
 ## 核心约定
 
@@ -15,7 +15,8 @@ macOS 菜单栏 + 悬浮确认面板，用于观测多个 Claude Code CLI 会话
 - **所有需要用户操作的提醒必须是中文人话**：说清楚「要做什么、有什么影响、你要决定什么」，按钮也是中文动作。原始命令/路径只放在「查看完整命令」里，默认不展示大段代码。
 - 提醒必须显眼但不抢键盘焦点：常驻状态条 + 确认卡升级（脉冲、声音、抬到最前、移动到鼠标所在屏幕），不改变用户当前输入焦点。
 - 点击任意任务卡片必须打开对应终端会话：后台任务用 `claude attach`，交互式会话激活 Terminal（有自动化权限时按 tty 精确选中标签页）。**「已完成」后台任务只要进程还活着也必须用 attach**（`--resume` 会被 Claude Code 拒绝）；只有会话已从 `claude agents` 消失、只剩本地记录时才用 `claude --resume`。终端启动走 `.command` + Launch Services，不把 Automation 权限当必需依赖。
-- **不重复开窗口**：点击前先扫进程表找已存在的 `claude attach <id>` / `claude --resume <id>`，找到就按 tty 定位那个标签页；只有找不到时才新建窗口。定位失败（未授权、终端无响应）时激活终端并只弹一次授权框，绝不退化成开第二个窗口。
+- **不重复开窗口**：点击前先扫进程表找已存在的 `claude attach <id>` / `claude --resume <id>`，再按启动脚本名里的任务标记（`task-attach-<id>-*.command`）兜底——按 ← 退回 agent 视图或 attach 提前退出后，claude 子进程的 argv 不再含任务 id，但父 shell 仍在跑这个脚本。找到就按 tty 定位那个标签页；只有找不到时才新建窗口。定位失败（未授权、终端无响应）时激活终端并只弹一次授权框，绝不退化成开第二个窗口。
+- **不把空闲会话池当任务**：`~/.claude/sessions/<pid>.json` 里 `spare: true` 的是后台守护进程预热的空会话，没有对话，attach 只会得到空白 agent 视图，必须在 SessionStore 读取时过滤掉。
 
 ## 目录结构
 

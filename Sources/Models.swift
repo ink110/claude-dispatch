@@ -12,6 +12,9 @@ struct SessionRecord: Decodable {
     let updatedAt: Double?
     let entrypoint: String?
     let jobId: String?
+    /// Claude Code 后台守护进程预热的空会话池（`spare: true`）。
+    /// 没有对话内容，attach 只会打开一个空白 agent 视图，不能当任务展示。
+    let spare: Bool?
 
     var isBackground: Bool { kind == "bg" || kind == "background" }
     var displayName: String {

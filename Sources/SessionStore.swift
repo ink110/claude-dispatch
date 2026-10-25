@@ -165,6 +165,9 @@ final class SessionStore {
                 let record = try? JSONDecoder().decode(SessionRecord.self, from: data)
             else { continue }
             guard isAlive(pid: record.pid) else { continue }
+            // spare 是后台守护进程预热的空会话，不是用户任务：
+            // 它没有对话，点开只会得到一个新的空白 Claude 窗口。
+            guard record.spare != true else { continue }
             loaded.append(record)
         }
 

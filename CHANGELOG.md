@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.2 — 2026-10-25
+
+### Fixed
+
+- Clicking a task could open a new, empty Claude window instead of the task's conversation. The session panel was listing Claude Code's pre-warmed background slots (`spare: true` in the session registry) as tasks — they have no conversation, so attaching to one falls back to a blank agent view. Those internal slots are now hidden.
+- Duplicate windows are now prevented even when the task's Claude process no longer shows the attach id in its command line (for example, after pressing ← to return to the agent view): the launcher script name carries a task marker that is matched against the process table.
+
 ## 1.1.1 — 2026-10-25
 
 ### Fixed

@@ -28,10 +28,11 @@ enum TerminalLauncher {
 
         // 已结束的任务 attach 不到，改为恢复历史对话。
         if resume, let sessionId, !sessionId.isEmpty {
+            let marker = "resume-\(sanitizedId(sessionId) ?? "session")"
             queue.async {
                 // 之前已经恢复过的窗口先定位过去，不重复开新窗口。
-                if focusExistingWindow(claudeArgs: ["--resume", sessionId]) { return }
-                openCommand("claude --resume \(sessionId)", title: name, cwd: cwd)
+                if focusExistingWindow(claudeArgs: ["--resume", sessionId], marker: marker) { return }
+                openCommand("claude --resume \(sessionId)", title: name, cwd: cwd, marker: marker)
             }
             return
         }
@@ -41,10 +42,11 @@ enum TerminalLauncher {
                 DispatchQueue.main.async { activateTerminal() }
                 return
             }
+            let marker = "attach-\(safeId)"
             queue.async {
                 // 这个任务已经 attach 在某个终端窗口里时，直接切过去。
-                if focusExistingWindow(claudeArgs: ["attach", safeId]) { return }
-                openCommand("claude attach \(safeId)", title: name, cwd: cwd)
+                if focusExistingWindow(claudeArgs: ["attach", safeId], marker: marker) { return }
+                openCommand("claude attach \(safeId)", title: name, cwd: cwd, marker: marker)
             }
             return
         }
@@ -60,9 +62,10 @@ enum TerminalLauncher {
 
         // 进程已经结束：恢复历史会话，仍停留在对应项目目录。
         if let sessionId, !sessionId.isEmpty {
+            let marker = "resume-\(sanitizedId(sessionId) ?? "session")"
             queue.async {
-                if focusExistingWindow(claudeArgs: ["--resume", sessionId]) { return }
-                openCommand("claude --resume \(sessionId)", title: name, cwd: cwd)
+                if focusExistingWindow(claudeArgs: ["--resume", sessionId], marker: marker) { return }
+                openCommand("claude --resume \(sessionId)", title: name, cwd: cwd, marker: marker)
             }
             return
         }
@@ -72,7 +75,9 @@ enum TerminalLauncher {
 
     // MARK: - 新终端窗口
 
-    private static func openCommand(_ command: String, title: String, cwd: String) {
+    /// `marker` 会写进脚本文件名（`task-<marker>-<uuid>.command`），
+    /// 用来在 claude 子进程的 argv 变化后仍能认出这个窗口（见 `launchScript`）。
+    private static func openCommand(_ command: String, title: String, cwd: String, marker: String) {
         let fm = FileManager.default
         let dir = AppConfig.stateDir.appendingPathComponent("launch", isDirectory: true)
         do {
@@ -84,7 +89,8 @@ enum TerminalLauncher {
         }
         pruneOldScripts(in: dir)
 
-        let url = dir.appendingPathComponent("task-\(UUID().uuidString.prefix(8)).command")
+        let safeMarker = sanitizedId(marker) ?? "task"
+        let url = dir.appendingPathComponent("task-\(safeMarker)-\(UUID().uuidString.prefix(8)).command")
         let safeTitle = title
             .replacingOccurrences(of: "'", with: "")
             .replacingOccurrences(of: "\n", with: " ")
@@ -173,9 +179,10 @@ enum TerminalLauncher {
             // 会话跑在 Terminal 之外（如远程 tmux）：无法选中标签页，
             // 改为恢复该会话；如果之前已经恢复过，先定位到那个窗口。
             guard let sessionId, !sessionId.isEmpty else { return }
+            let marker = "resume-\(sanitizedId(sessionId) ?? "session")"
             debugLog("no tab for tty \(tty), resuming session")
-            if focusExistingWindow(claudeArgs: ["--resume", sessionId]) { return }
-            openCommand("claude --resume \(sessionId)", title: name, cwd: cwd)
+            if focusExistingWindow(claudeArgs: ["--resume", sessionId], marker: marker) { return }
+            openCommand("claude --resume \(sessionId)", title: name, cwd: cwd, marker: marker)
         }
     }
 
@@ -241,8 +248,8 @@ enum TerminalLauncher {
     /// 直接把对应 Terminal 标签页切到前台。找不到返回 false，由调用方新开窗口。
     /// 找到了但选不中标签页（未授权自动化、终端正忙）时只把终端激活到前台，
     /// 不再开第二个同样的窗口——重复窗口比手动找标签页更让人困惑。
-    private static func focusExistingWindow(claudeArgs: [String]) -> Bool {
-        guard let tty = existingTTY(claudeArgs: claudeArgs) else { return false }
+    private static func focusExistingWindow(claudeArgs: [String], marker: String) -> Bool {
+        guard let tty = existingTTY(claudeArgs: claudeArgs, marker: marker) else { return false }
         debugLog("existing window for \(claudeArgs.joined(separator: " ")) at \(tty)")
         switch focusTab(tty: tty) {
         case .focused:
@@ -272,7 +279,7 @@ enum TerminalLauncher {
 
     /// 扫描进程表，返回第一条匹配命令的 tty。
     /// 只认真正的 `claude` 进程，避免把脚本路径或参数里的同样字符串误判成任务窗口。
-    private static func existingTTY(claudeArgs: [String]) -> String? {
+    private static func existingTTY(claudeArgs: [String], marker: String) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
         process.arguments = ["-axo", "pid=,tty=,command="]
@@ -291,10 +298,20 @@ enum TerminalLauncher {
             let pid = Int32(parts[0]) ?? 0
             let tty = String(parts[1])
             guard pid > 0, pid != getpid(), tty != "??", tty != "-" else { continue }
-            guard commandLine(String(parts[2]), matches: claudeArgs) else { continue }
+            let command = String(parts[2])
+            guard commandLine(command, matches: claudeArgs) || launchScript(command, matches: marker) else {
+                continue
+            }
             return tty.hasPrefix("/dev/") ? tty : "/dev/" + tty
         }
         return nil
+    }
+
+    /// 认出发起窗口的那个 `.command` 脚本（名字里带任务标记）。
+    /// `claude attach <id>` 被用户按 ← 退回 agent 视图、或 attach 提前退出后，
+    /// claude 子进程的 argv 不再含任务 id，但保留着的父 shell 仍然在跑这个脚本。
+    private static func launchScript(_ command: String, matches marker: String) -> Bool {
+        command.contains("task-\(marker)-") && command.contains(".command")
     }
 
     private static func commandLine(_ command: String, matches claudeArgs: [String]) -> Bool {
