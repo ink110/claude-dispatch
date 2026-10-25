@@ -49,7 +49,7 @@ Hover or click the bar to expand. Sessions are grouped by state; each row shows 
 - **Waiting for input**: the terminal itself is waiting for typed input, but there is no card to click.
 - **Possibly stuck**: the task is busy but has produced no activity for five minutes.
 - **Running / Completed / Idle**: everything else.
-- Click any row to open its terminal session: background jobs use `claude attach`, interactive sessions focus the matching Terminal tab, finished sessions resume with `claude --resume`.
+- Click any row to open its terminal session: background jobs use `claude attach`, interactive sessions focus the matching Terminal tab, finished sessions resume with `claude --resume`. If that session already has a window, Claude Dispatch jumps to it instead of opening a duplicate.
 - Footer: refresh, toggle launch at login, quit.
 
 ### 3. Request cards: permissions, questions, plans
@@ -150,7 +150,7 @@ cd claude-dispatch
 
 ### Automation permission (optional)
 
-Focusing the exact Terminal tab requires permission to control Terminal. Without it, Claude Dispatch only brings Terminal to the front; `claude attach` still works.
+Focusing the exact Terminal tab requires permission to control Terminal. The first time focusing fails, Claude Dispatch asks for it once; after that, every click selects the matching tab. Denying it still works: the app only brings Terminal to the front and never opens duplicate windows. `claude attach` is unaffected.
 
 To trigger the permission prompt explicitly:
 

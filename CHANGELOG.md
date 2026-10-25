@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1 — 2026-10-25
+
+### Fixed
+
+- Clicking a task that already has a terminal window now focuses that window instead of opening a duplicate. Background jobs look for a running `claude attach <id>`, finished sessions look for `claude --resume <id>`.
+- Tab focusing can no longer hang: the AppleScript runs in a killable `osascript` subprocess with a hard timeout. In-process `NSAppleScript` blocked indefinitely when called off the main thread.
+- When focusing fails (for example, the automation permission has not been granted yet), the app brings the terminal forward and asks for permission once, rather than opening a second window.
+
 ## 1.1.0 — 2026-10-18
 
 ### Added

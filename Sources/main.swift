@@ -37,7 +37,7 @@ if flags.contains("--uninstall-hooks") {
 if let index = CommandLine.arguments.firstIndex(of: "--open-attach"),
    CommandLine.arguments.indices.contains(index + 1) {
     TerminalLauncher.openTask(attachId: CommandLine.arguments[index + 1], name: "Claude Dispatch 测试")
-    RunLoop.main.run(until: Date().addingTimeInterval(3))
+    RunLoop.main.run(until: Date().addingTimeInterval(6))
     exit(0)
 }
 

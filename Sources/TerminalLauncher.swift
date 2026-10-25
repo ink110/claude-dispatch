@@ -3,15 +3,17 @@ import ApplicationServices
 import Darwin
 
 /// 把任务送进终端：
-/// - 后台任务：在 Terminal 新窗口执行 `claude attach <短 id>`，进入任务对话；
+/// - 后台任务：已经 attach 过的，直接定位到那个 Terminal 标签页；没有才新开窗口执行 `claude attach <短 id>`；
 /// - 交互式会话：进程还活着时把 Terminal 切到前台，有自动化权限时精确选中对应标签页；
-/// - 已结束的交互式会话：用 `claude --resume <完整 id>` 重新打开历史对话。
-/// 生成 `.command` 文件交给 Launch Services 打开，不依赖 Apple Events 权限。
+/// - 已结束的交互式会话：已经 resume 过的直接定位，否则用 `claude --resume <完整 id>` 打开历史对话。
+/// 新开窗口走 `.command` 文件交给 Launch Services，不依赖 Apple Events 权限；
+/// 只有「精确定位标签页」需要一次性的「控制 Terminal」授权。
 enum TerminalLauncher {
     private static let queue = DispatchQueue(label: "com.ink.claudedispatch.terminal", qos: .userInitiated)
     private static let permissionQueue = DispatchQueue(label: "com.ink.claudedispatch.terminal.permission")
     private static let stateLock = NSLock()
     private static var automationAllowed = false
+    private static var automationConsentRequested = false
 
     static func openTask(
         attachId: String?,
@@ -27,6 +29,8 @@ enum TerminalLauncher {
         // 已结束的任务 attach 不到，改为恢复历史对话。
         if resume, let sessionId, !sessionId.isEmpty {
             queue.async {
+                // 之前已经恢复过的窗口先定位过去，不重复开新窗口。
+                if focusExistingWindow(claudeArgs: ["--resume", sessionId]) { return }
                 openCommand("claude --resume \(sessionId)", title: name, cwd: cwd)
             }
             return
@@ -38,6 +42,8 @@ enum TerminalLauncher {
                 return
             }
             queue.async {
+                // 这个任务已经 attach 在某个终端窗口里时，直接切过去。
+                if focusExistingWindow(claudeArgs: ["attach", safeId]) { return }
                 openCommand("claude attach \(safeId)", title: name, cwd: cwd)
             }
             return
@@ -55,6 +61,7 @@ enum TerminalLauncher {
         // 进程已经结束：恢复历史会话，仍停留在对应项目目录。
         if let sessionId, !sessionId.isEmpty {
             queue.async {
+                if focusExistingWindow(claudeArgs: ["--resume", sessionId]) { return }
                 openCommand("claude --resume \(sessionId)", title: name, cwd: cwd)
             }
             return
@@ -71,7 +78,7 @@ enum TerminalLauncher {
         do {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {
-            debugLog("terminal: create launch dir failed: \(error)")
+            debugLog("create launch dir failed: \(error)")
             DispatchQueue.main.async { activateTerminal() }
             return
         }
@@ -90,20 +97,20 @@ enum TerminalLauncher {
         do {
             try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            debugLog("terminal: write command failed: \(error)")
+            debugLog("write command failed: \(error)")
             DispatchQueue.main.async { activateTerminal() }
             return
         }
         try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
 
         guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
-            debugLog("terminal: Terminal.app not found")
+            debugLog("Terminal.app not found")
             DispatchQueue.main.async { activateTerminal() }
             return
         }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        debugLog("terminal: opening command \(url.lastPathComponent)")
+        debugLog("opening command \(url.lastPathComponent)")
         NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: configuration) { _, error in
             if let error {
                 dispatchLog("terminal: open command failed: \(error)")
@@ -130,37 +137,55 @@ enum TerminalLauncher {
 
     // MARK: - 交互式会话定位
 
+    private enum FocusResult {
+        case focused
+        case notFound
+        case failed
+    }
+
     /// 直接执行 AppleScript 精确聚焦对应标签页。
-    /// 不用 AEDeterminePermissionToAutomateTarget 预检：首次授权或待授权时它会无限阻塞。
-    /// 已授权时立即生效；未授权时由系统弹授权框或返回错误，且全程在后台队列，不卡 UI。
+    /// 全程在后台队列，不卡 UI；子进程有硬超时，终端无响应也不会拖住后续点击。
     private static func focusTerminalTab(
         forPID pid: Int32,
         sessionId: String?,
         name: String,
         cwd: String
     ) {
-        debugLog("terminal: focusing pid \(pid)")
+        debugLog("focusing pid \(pid)")
         guard let tty = ttyForPID(pid) else {
-            debugLog("terminal: no tty for pid \(pid)")
+            debugLog("no tty for pid \(pid)")
             return
         }
-        debugLog("terminal: tty for pid \(pid) = \(tty)")
+        debugLog("tty for pid \(pid) = \(tty)")
         permissionQueue.async {
-            let found = focusTab(tty: tty)
-            guard !found else { return }
+            switch focusTab(tty: tty) {
+            case .focused:
+                return
+            case .failed:
+                // 多半是还没给「控制 Terminal」权限：先把终端带到前台，并只弹一次授权框。
+                DispatchQueue.main.async { activateTerminal() }
+                requestAutomationConsentOnce()
+                return
+            case .notFound:
+                break
+            }
 
             // 会话跑在 Terminal 之外（如远程 tmux）：无法选中标签页，
-            // 改为新开终端恢复该会话，保证点卡片仍能进入对应对话。
+            // 改为恢复该会话；如果之前已经恢复过，先定位到那个窗口。
             guard let sessionId, !sessionId.isEmpty else { return }
-            debugLog("terminal: no tab for tty \(tty), resuming session")
+            debugLog("no tab for tty \(tty), resuming session")
+            if focusExistingWindow(claudeArgs: ["--resume", sessionId]) { return }
             openCommand("claude --resume \(sessionId)", title: name, cwd: cwd)
         }
     }
 
-    private static func focusTab(tty: String) -> Bool {
+    /// 用独立 `osascript` 子进程执行聚焦，不用进程内 NSAppleScript：
+    /// 后者在后台线程发送 Apple Event 会一直阻塞（实测 >15s 不返回），把整个队列卡死。
+    /// 子进程可以按超时强杀，未授权或终端无响应时最多等 4 秒。
+    private static func focusTab(tty: String) -> FocusResult {
         let ttyLiteral = appleScriptLiteral(tty)
         let script = """
-        with timeout of 5 seconds
+        with timeout of 3 seconds
             tell application "Terminal"
                 activate
                 repeat with w in windows
@@ -176,15 +201,111 @@ enum TerminalLauncher {
             return "missing"
         end timeout
         """
-        var errorInfo: NSDictionary?
-        let result = NSAppleScript(source: script)?.executeAndReturnError(&errorInfo)
-        if let errorInfo {
-            debugLog("terminal: focus tab error: \(errorInfo)")
-            return false
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
+        guard (try? process.run()) != nil else {
+            debugLog("focus tab: osascript failed to launch")
+            return .failed
         }
-        let found = result?.stringValue == "found"
-        debugLog(found ? "terminal: focused tty \(tty)" : "terminal: no tab for tty \(tty)")
-        return found
+        if finished.wait(timeout: .now() + 4) == .timedOut {
+            process.terminate()
+            debugLog("focus tab: timed out for tty \(tty)")
+            return .failed
+        }
+        guard process.terminationStatus == 0 else {
+            debugLog("focus tab: osascript exit=\(process.terminationStatus) for tty \(tty)")
+            return .failed
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if output == "found" {
+            debugLog("focused tty \(tty)")
+            return .focused
+        }
+        debugLog("no tab for tty \(tty)")
+        return .notFound
+    }
+
+    // MARK: - 已有任务窗口
+
+    /// 在正在运行的进程里找到这个任务已经打开的终端会话（`attach` / `--resume`），
+    /// 直接把对应 Terminal 标签页切到前台。找不到返回 false，由调用方新开窗口。
+    /// 找到了但选不中标签页（未授权自动化、终端正忙）时只把终端激活到前台，
+    /// 不再开第二个同样的窗口——重复窗口比手动找标签页更让人困惑。
+    private static func focusExistingWindow(claudeArgs: [String]) -> Bool {
+        guard let tty = existingTTY(claudeArgs: claudeArgs) else { return false }
+        debugLog("existing window for \(claudeArgs.joined(separator: " ")) at \(tty)")
+        switch focusTab(tty: tty) {
+        case .focused:
+            return true
+        case .notFound:
+            // 标签页不在 Terminal（可能在 iTerm2 等）：激活对应终端，不再开重复窗口。
+            DispatchQueue.main.async { activateTerminal() }
+            return true
+        case .failed:
+            // 多半是没给「控制 Terminal」权限：激活终端，并只弹一次授权框。
+            DispatchQueue.main.async { activateTerminal() }
+            requestAutomationConsentOnce()
+            return true
+        }
+    }
+
+    /// 首次聚焦失败时主动弹一次系统授权框。用户允许后，后续点击就能精确选中标签页。
+    private static func requestAutomationConsentOnce() {
+        stateLock.lock()
+        let shouldRequest = !automationConsentRequested
+        automationConsentRequested = true
+        stateLock.unlock()
+        guard shouldRequest else { return }
+        debugLog("requesting automation consent")
+        permissionQueue.async { _ = requestAutomationPermission() }
+    }
+
+    /// 扫描进程表，返回第一条匹配命令的 tty。
+    /// 只认真正的 `claude` 进程，避免把脚本路径或参数里的同样字符串误判成任务窗口。
+    private static func existingTTY(claudeArgs: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,tty=,command="]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else { return nil }
+
+        for line in output.split(separator: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+            guard parts.count == 3 else { continue }
+            let pid = Int32(parts[0]) ?? 0
+            let tty = String(parts[1])
+            guard pid > 0, pid != getpid(), tty != "??", tty != "-" else { continue }
+            guard commandLine(String(parts[2]), matches: claudeArgs) else { continue }
+            return tty.hasPrefix("/dev/") ? tty : "/dev/" + tty
+        }
+        return nil
+    }
+
+    private static func commandLine(_ command: String, matches claudeArgs: [String]) -> Bool {
+        let tokens = command.split(separator: " ").map(String.init)
+        guard tokens.count > claudeArgs.count else { return false }
+        for index in 0..<(tokens.count - claudeArgs.count) {
+            guard (tokens[index] as NSString).lastPathComponent == "claude" else { continue }
+            let arguments = Array(tokens[(index + 1)...(index + claudeArgs.count)])
+            if arguments == claudeArgs { return true }
+        }
+        return false
     }
 
     private static func ttyForPID(_ pid: Int32) -> String? {
@@ -221,13 +342,13 @@ enum TerminalLauncher {
         process.standardError = FileHandle.nullDevice
         try? process.run()
         process.waitUntilExit()
-        debugLog("terminal: automation probe exit=\(process.terminationStatus)")
+        debugLog("automation probe exit=\(process.terminationStatus)")
 
         var status = automationPermission(ask: false)
-        debugLog("terminal: automation status after probe=\(status)")
+        debugLog("automation status after probe=\(status)")
         if status != noErr {
             status = automationPermission(ask: true)
-            debugLog("terminal: automation request status=\(status)")
+            debugLog("automation request status=\(status)")
         }
         if status == noErr {
             setAutomationAllowed(true)
