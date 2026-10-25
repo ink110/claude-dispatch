@@ -34,9 +34,19 @@ if flags.contains("--uninstall-hooks") {
 }
 
 // 排障：以 App 自身身份验证「打开任务」链路（Terminal 自动化权限等）。
+// `--times N` 在同一个进程里连点 N 次，用来验证不会重复开窗口。
 if let index = CommandLine.arguments.firstIndex(of: "--open-attach"),
    CommandLine.arguments.indices.contains(index + 1) {
-    TerminalLauncher.openTask(attachId: CommandLine.arguments[index + 1], name: "Claude Dispatch 测试")
+    let attachId = CommandLine.arguments[index + 1]
+    let times: Int = {
+        guard let i = CommandLine.arguments.firstIndex(of: "--times"),
+              CommandLine.arguments.indices.contains(i + 1),
+              let n = Int(CommandLine.arguments[i + 1]), n > 0 else { return 1 }
+        return n
+    }()
+    for _ in 0..<times {
+        TerminalLauncher.openTask(attachId: attachId, name: "Claude Dispatch 测试")
+    }
     RunLoop.main.run(until: Date().addingTimeInterval(6))
     exit(0)
 }

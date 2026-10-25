@@ -15,7 +15,7 @@ macOS 菜单栏 + 悬浮确认面板，用于观测多个 Claude Code CLI 会话
 - **所有需要用户操作的提醒必须是中文人话**：说清楚「要做什么、有什么影响、你要决定什么」，按钮也是中文动作。原始命令/路径只放在「查看完整命令」里，默认不展示大段代码。
 - 提醒必须显眼但不抢键盘焦点：常驻状态条 + 确认卡升级（脉冲、声音、抬到最前、移动到鼠标所在屏幕），不改变用户当前输入焦点。
 - 点击任意任务卡片必须打开对应终端会话：后台任务用 `claude attach`，交互式会话激活 Terminal（有自动化权限时按 tty 精确选中标签页）。**「已完成」后台任务只要进程还活着也必须用 attach**（`--resume` 会被 Claude Code 拒绝）；只有会话已从 `claude agents` 消失、只剩本地记录时才用 `claude --resume`。终端启动走 `.command` + Launch Services，不把 Automation 权限当必需依赖。
-- **不重复开窗口**：点击前先扫进程表找已存在的 `claude attach <id>` / `claude --resume <id>`，再按启动脚本名里的任务标记（`task-attach-<id>-*.command`）兜底——按 ← 退回 agent 视图或 attach 提前退出后，claude 子进程的 argv 不再含任务 id，但父 shell 仍在跑这个脚本。找到就按 tty 定位那个标签页；只有找不到时才新建窗口。定位失败（未授权、终端无响应）时激活终端并只弹一次授权框，绝不退化成开第二个窗口。
+- **不重复开窗口**：点击前先扫进程表找已存在的 `claude attach <id>` / `claude --resume <id>`，再按启动脚本名里的任务标记（`task-attach-<id>-*.command`）兜底——按 ← 退回 agent 视图或 attach 提前退出后，claude 子进程的 argv 不再含任务 id，但父 shell 仍在跑这个脚本。找到就按 tty 定位那个标签页；只有找不到时才新建窗口。定位失败（未授权、终端无响应）时激活终端并只弹一次授权框，绝不退化成开第二个窗口。新建窗口前还要在内存里占位 8 秒（`claimOpening`），因为启动脚本的进程要几百毫秒后才出现，连点两次会在这个空档里开出第二个窗口。
 - **不把空闲会话池当任务**：`~/.claude/sessions/<pid>.json` 里 `spare: true` 的是后台守护进程预热的空会话，没有对话，attach 只会得到空白 agent 视图，必须在 SessionStore 读取时过滤掉。
 
 ## 目录结构
@@ -115,4 +115,6 @@ claude-dispatch/
 - 自动化权限：`open -n ~/Applications/ClaudeDispatch.app --args --request-automation` 主动调出「控制终端」授权框（首次授权或排障用）。
 - 终端聚焦：`open ~/Applications/ClaudeDispatch.app --args --focus-pid <pid>` 在真实 App 进程里触发一次标签页聚焦，配合 `~/.claude-dispatch/debug.log` 断言 `focused tty`。
 - 已有窗口复用：`open -n ~/Applications/ClaudeDispatch.app --args --debug --open-attach <短 id>`；第一次应新开窗口，再执行一次应只把该窗口提到最前（`focused tty`，Terminal 窗口数不变）。
+- 连点防重：`open -n ~/Applications/ClaudeDispatch.app --args --debug --open-attach <短 id> --times 2`，只应出现一个 `claude attach <id>` 进程，日志里应有一条 `skip duplicate open`。
+- 空闲池过滤：`grep -l '"spare":true' ~/.claude/sessions/*.json` 有结果时，状态面板不应出现名字是短 id（如 `446134c2`）的行。
 - 调试日志默认关闭；`CLAUDE_DISPATCH_DEBUG=1` 开启，写入 `~/.claude-dispatch/debug.log`，超过 1MB 自动清空。

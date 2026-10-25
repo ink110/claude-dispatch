@@ -30,9 +30,13 @@ enum TerminalLauncher {
         if resume, let sessionId, !sessionId.isEmpty {
             let marker = "resume-\(sanitizedId(sessionId) ?? "session")"
             queue.async {
-                // 之前已经恢复过的窗口先定位过去，不重复开新窗口。
-                if focusExistingWindow(claudeArgs: ["--resume", sessionId], marker: marker) { return }
-                openCommand("claude --resume \(sessionId)", title: name, cwd: cwd, marker: marker)
+                openOrFocus(
+                    command: "claude --resume \(sessionId)",
+                    claudeArgs: ["--resume", sessionId],
+                    title: name,
+                    cwd: cwd,
+                    marker: marker
+                )
             }
             return
         }
@@ -44,9 +48,13 @@ enum TerminalLauncher {
             }
             let marker = "attach-\(safeId)"
             queue.async {
-                // 这个任务已经 attach 在某个终端窗口里时，直接切过去。
-                if focusExistingWindow(claudeArgs: ["attach", safeId], marker: marker) { return }
-                openCommand("claude attach \(safeId)", title: name, cwd: cwd, marker: marker)
+                openOrFocus(
+                    command: "claude attach \(safeId)",
+                    claudeArgs: ["attach", safeId],
+                    title: name,
+                    cwd: cwd,
+                    marker: marker
+                )
             }
             return
         }
@@ -64,8 +72,13 @@ enum TerminalLauncher {
         if let sessionId, !sessionId.isEmpty {
             let marker = "resume-\(sanitizedId(sessionId) ?? "session")"
             queue.async {
-                if focusExistingWindow(claudeArgs: ["--resume", sessionId], marker: marker) { return }
-                openCommand("claude --resume \(sessionId)", title: name, cwd: cwd, marker: marker)
+                openOrFocus(
+                    command: "claude --resume \(sessionId)",
+                    claudeArgs: ["--resume", sessionId],
+                    title: name,
+                    cwd: cwd,
+                    marker: marker
+                )
             }
             return
         }
@@ -74,6 +87,48 @@ enum TerminalLauncher {
     }
 
     // MARK: - 新终端窗口
+
+    /// 统一入口：先找已存在的窗口；没有再看是否刚为同一任务开过窗口，都没有才新建。
+    /// 必须在 `queue` 上调用（与 `claimOpening` 一起保证串行）。
+    private static func openOrFocus(
+        command: String,
+        claudeArgs: [String],
+        title: String,
+        cwd: String,
+        marker: String
+    ) {
+        if focusExistingWindow(claudeArgs: claudeArgs, marker: marker) { return }
+        guard claimOpening(marker) else {
+            // 连点同一个任务：第一个窗口正在启动，第二个点击只把终端带到前台。
+            debugLog("skip duplicate open for \(marker)")
+            DispatchQueue.main.async { activateTerminal() }
+            return
+        }
+        openCommand(command, title: title, cwd: cwd, marker: marker)
+    }
+
+    /// 最近为某个任务开过窗口的时间。启动脚本的进程要几百毫秒后才出现，
+    /// 只靠进程扫描挡不住「第一次窗口还没起来、第二次点击已经进来」。
+    private static var openingMarkers: [String: Date] = [:]
+
+    private static func claimOpening(_ marker: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        let now = Date()
+        openingMarkers = openingMarkers.filter { now.timeIntervalSince($0.value) < 60 }
+        if let last = openingMarkers[marker], now.timeIntervalSince(last) < 8 {
+            return false
+        }
+        openingMarkers[marker] = now
+        return true
+    }
+
+    /// 窗口最终没开起来时释放占位，用户可以立刻重试。
+    private static func releaseOpening(_ marker: String) {
+        stateLock.lock()
+        openingMarkers[marker] = nil
+        stateLock.unlock()
+    }
 
     /// `marker` 会写进脚本文件名（`task-<marker>-<uuid>.command`），
     /// 用来在 claude 子进程的 argv 变化后仍能认出这个窗口（见 `launchScript`）。
@@ -84,6 +139,7 @@ enum TerminalLauncher {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {
             debugLog("create launch dir failed: \(error)")
+            releaseOpening(marker)
             DispatchQueue.main.async { activateTerminal() }
             return
         }
@@ -104,6 +160,7 @@ enum TerminalLauncher {
             try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
         } catch {
             debugLog("write command failed: \(error)")
+            releaseOpening(marker)
             DispatchQueue.main.async { activateTerminal() }
             return
         }
@@ -111,6 +168,7 @@ enum TerminalLauncher {
 
         guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
             debugLog("Terminal.app not found")
+            releaseOpening(marker)
             DispatchQueue.main.async { activateTerminal() }
             return
         }
@@ -119,6 +177,7 @@ enum TerminalLauncher {
         debugLog("opening command \(url.lastPathComponent)")
         NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: configuration) { _, error in
             if let error {
+                releaseOpening(marker)
                 dispatchLog("terminal: open command failed: \(error)")
             } else {
                 dispatchLog("terminal: command opened")
