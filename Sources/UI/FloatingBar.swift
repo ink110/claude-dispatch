@@ -270,6 +270,15 @@ final class FloatingBarController {
         expandedShadow?.show()
         Theme.fadeIn(expandedPanel)
         startHoverWatch()
+
+        // 自测：验证每一行的点击区域是否落在自己身上（配合固定演示数据）。
+        if ProcessInfo.processInfo.environment["CLAUDE_DISPATCH_HIT_TEST"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let report = self?.statusController?.debugHitTestReport() else { return }
+                for line in report { print("hit-test: \(line)") }
+                fflush(stdout)
+            }
+        }
     }
 
     private func hideExpanded() {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.3 — 2026-10-25
+
+### Fixed
+
+- Clicking any task in the panel always opened the last task in the list. The clickable row's `hitTest` returned itself unconditionally; inside an `NSStackView` every click reaches the last row first, so the last row swallowed the entire content area. The row now only claims hits that fall inside its own frame or bounds.
+
 ## 1.1.2 — 2026-10-25
 
 ### Fixed

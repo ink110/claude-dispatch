@@ -265,6 +265,28 @@ final class StatusViewController: NSViewController {
         scroll.reflectScrolledClipView(scroll.contentView)
     }
 
+    /// 自测：对每一行的中心点做一次真实 hitTest，打印「这一行 → 实际命中的行」。
+    /// 走 window.contentView 的完整命中路径（和真实点击一致），不用自己猜坐标转换。
+    /// 面板用 `CLAUDE_DISPATCH_DEMO_AGENTS` 的固定数据，不需要点击、不依赖真实会话。
+    func debugHitTestReport() -> [String] {
+        stack.layoutSubtreeIfNeeded()
+        view.layoutSubtreeIfNeeded()
+        guard let window = view.window, let content = window.contentView else {
+            return ["no window"]
+        }
+        return stack.arrangedSubviews.compactMap { subview in
+            guard let row = subview as? ClickableRow else { return nil }
+            let centerInWindow = row.convert(
+                NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil
+            )
+            let point = content.convert(centerInWindow, from: nil)
+            let hitView = content.hitTest(point)
+            let hitName = (hitView as? ClickableRow)?.rowTitle
+                ?? (hitView.map { String(describing: type(of: $0)) } ?? "nil")
+            return "\(row.rowTitle) -> \(hitName)"
+        }
+    }
+
     // MARK: - 组件
 
     private func header(needs: Int, waiting: Int, stale: Int, running: Int, completed: Int, idle: Int) -> NSView {
@@ -510,6 +532,8 @@ private final class ClickableRow: NSView {
     private let onClick: () -> Void
     private let card = NSView()
     private var tracking: NSTrackingArea?
+    /// 自测报告用：行标题。
+    let rowTitle: String
 
     init(
         title: String,
@@ -520,6 +544,7 @@ private final class ClickableRow: NSView {
         onClick: @escaping () -> Void
     ) {
         self.onClick = onClick
+        self.rowTitle = title
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(equalToConstant: 392).isActive = true
@@ -597,7 +622,14 @@ private final class ClickableRow: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        self
+        // 必须判断点是否落在自己内部。无条件返回 self 会让列表里最后一行吃掉
+        // 整块内容区的点击——点任何任务都打开最后一条。
+        // 注意：嵌在 flipped document view（滚动容器）里时，父视图链传给 hitTest 的点
+        // 有时是父视图坐标系（frame 空间）、有时是自身 bounds 空间，两种都要认，
+        // 否则列表只有最后一行能点、其余行点击落空。
+        let inOwnBounds = bounds.contains(point)
+        let inSuperviewFrame = frame.contains(point)
+        return (inOwnBounds || inSuperviewFrame) ? self : nil
     }
 
     override func updateTrackingAreas() {
