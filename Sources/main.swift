@@ -38,6 +38,12 @@ if flags.contains("--uninstall-hooks") {
 if let index = CommandLine.arguments.firstIndex(of: "--open-attach"),
    CommandLine.arguments.indices.contains(index + 1) {
     let attachId = CommandLine.arguments[index + 1]
+    // 可选：用真实任务名触发，验证「按标签页标题认领手动窗口」的兜底。
+    let debugName: String = {
+        guard let i = CommandLine.arguments.firstIndex(of: "--name"),
+              CommandLine.arguments.indices.contains(i + 1) else { return "Claude Dispatch 测试" }
+        return CommandLine.arguments[i + 1]
+    }()
     let times: Int = {
         guard let i = CommandLine.arguments.firstIndex(of: "--times"),
               CommandLine.arguments.indices.contains(i + 1),
@@ -45,7 +51,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--open-attach"),
         return n
     }()
     for _ in 0..<times {
-        TerminalLauncher.openTask(attachId: attachId, name: "Claude Dispatch 测试")
+        TerminalLauncher.openTask(attachId: attachId, name: debugName)
     }
     RunLoop.main.run(until: Date().addingTimeInterval(6))
     exit(0)

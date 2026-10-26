@@ -2,7 +2,7 @@
 
 macOS 菜单栏 + 悬浮确认面板，用于观测多个 Claude Code CLI 会话，并在任务需要确认时主动提醒、直接在浮层里批复或补充信息。
 
-公开版本：v1.1.4，MIT 许可证，仓库名 `claude-dispatch`；分发形态为通用二进制 `.app` + zip（ad-hoc 签名，不公证）。
+公开版本：v1.1.5，MIT 许可证，仓库名 `claude-dispatch`；分发形态为通用二进制 `.app` + zip（ad-hoc 签名，不公证）。
 
 ## 核心约定
 
@@ -18,6 +18,7 @@ macOS 菜单栏 + 悬浮确认面板，用于观测多个 Claude Code CLI 会话
 - **不重复开窗口**：点击前先扫进程表找已存在的 `claude attach <id>` / `claude --resume <id>`，再按启动脚本名里的任务标记（`task-attach-<id>-*.command`）兜底——按 ← 退回 agent 视图或 attach 提前退出后，claude 子进程的 argv 不再含任务 id，但父 shell 仍在跑这个脚本。找到就按 tty 定位那个标签页；只有找不到时才新建窗口。定位失败（未授权、终端无响应）时激活终端并只弹一次授权框，绝不退化成开第二个窗口。新建窗口前还要在内存里占位 8 秒（`claimOpening`），因为启动脚本的进程要几百毫秒后才出现，连点两次会在这个空档里开出第二个窗口。
 - **窗口还在但对话退出了要就地复活**：生成的启动脚本在 `claude attach` / `claude --resume` 结束后留一个 `zsh -i`（linger shell），保证窗口只要没关就一直在进程表里可查。点击时如果 tty 上只剩 shell（`scriptIdle`），用 `do script` 在同一个标签页重新执行 attach/resume，绝不新开窗口；如果 tty 上还跑着 agent 视图或其他程序，只聚焦、不注入命令。注意 Terminal 的 `busy` 属性对交互 shell 也为 true，不能用它判断「对话是否已退出」，要看该 tty 上的进程是不是全为 shell。
 - **旧版本窗口靠登记兜底**：1.1.4 之前的窗口没有 linger shell，对话退出后进程表里查不到。每次成功定位到活窗口时把 `marker → tty` 记进 `~/.claude-dispatch/windows.json`；进程表查不到时按登记的 tty 找标签页，`busy == false`（完全没有进程）才认作这个任务的空壳窗口并聚焦，标签页不存在或里面还有程序跑（tty 被复用）就删登记、按无窗口处理。
+- **手动 `claude agents` 窗口按标题认领**：用户手动在终端跑 `claude agents` 选中会话的窗口没有 attach 子进程、没有启动脚本，进程表和登记都找不到；但 Terminal 标签页标题跟随会话名（「◑ 插件迭代2.0」）。兜底按标题认领：剥掉状态符前缀后全等比较，容忍带「…」的截断名（前缀 ≥4 字符），命中只聚焦、绝不注入命令，登记带 `manual: true`。之后每次点击按标题复核，标题不符（改名/关窗）就作废登记、重新扫描。AppleScript 里不能用 `tab` 常量拼字符串——在 Terminal 的 tell 块里它被解析成 Terminal 的 tab 类、拼出来是字面量 "tab"；用 `ASCII character 9`。
 - **不把空闲会话池当任务**：`~/.claude/sessions/<pid>.json` 里 `spare: true` 的是后台守护进程预热的空会话，没有对话，attach 只会得到空白 agent 视图，必须在 SessionStore 读取时过滤掉。
 - **可点击行的 hitTest 必须裁剪到自己内部**：无条件返回 `self` 会让 `NSStackView` 里最后一行吃掉整块内容区的点击（父视图把同一个点依次交给每个子视图试探，不做 frame 裁剪）。嵌在 flipped document view 里时父链传来的点可能在 frame 空间也可能在 bounds 空间，两种都要认。用 `CLAUDE_DISPATCH_HIT_TEST=1` + `CLAUDE_DISPATCH_SHOW_FLOATING_STATUS=1` 自测每行中心点是否命中自己。
 
@@ -121,6 +122,7 @@ claude-dispatch/
 - 连点防重：`open -n ~/Applications/ClaudeDispatch.app --args --debug --open-attach <短 id> --times 2`，只应出现一个 `claude attach <id>` 进程，日志里应有一条 `skip duplicate open`。
 - 倒地复活：先 `--open-attach <短 id>` 开窗口，再 `kill` 掉它的 `claude attach` 进程（模拟 detach，窗口里的 `zsh -i` 应继续存活），然后再次 `--open-attach <短 id>`，日志应为 `idle window … reviving` + `revived tty`，同一 tty 上重新出现 `claude attach`，启动脚本数量不变。
 - 旧窗口登记：手动开一个不带 linger 的 `task-attach-<id>-*.command` 并 `--open-attach <id>` 一次（应把 tty 写入 `windows.json`），杀掉脚本进程让窗口变成空壳，再次 `--open-attach <id>` 应输出 `focused registered window`，不产生新脚本；关掉窗口后再执行，应删掉登记并新开窗口。
+- 手动窗口认领：`--open-attach <短 id> --name <会话名>`（加 `--debug` 看日志）。已存在同名标签页时应输出 `existing window for attach-<id> by tab title at /dev/ttysNNN` 且不产生新脚本；再点一次应输出 `focused registered window`（登记复核）；把登记的 tty 改成不存在的值后执行，应重新按标题找回同一窗口；名字匹配不到任何标签页时仍应正常新开窗口。
 - 空闲池过滤：`grep -l '"spare":true' ~/.claude/sessions/*.json` 有结果时，状态面板不应出现名字是短 id（如 `446134c2`）的行。
 - 点击命中：`CLAUDE_DISPATCH_HIT_TEST=1 CLAUDE_DISPATCH_SHOW_FLOATING_STATUS=1 build/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch`，每一行应报告「自己 -> 自己」；配合 `CLAUDE_DISPATCH_DEMO_AGENTS=<agents.json>` 用固定数据时不依赖本机会话。
 - 调试日志默认关闭；`CLAUDE_DISPATCH_DEBUG=1` 开启，写入 `~/.claude-dispatch/debug.log`，超过 1MB 自动清空。

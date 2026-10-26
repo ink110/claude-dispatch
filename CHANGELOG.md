@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.5 — 2026-10-26
+
+### Fixed
+
+- Clicking a task opened a duplicate window when its conversation was already on screen in a window the user had opened manually by running `claude agents` in Terminal. That window has no `claude attach` process and no launcher script, so neither the process scan nor the window registry could find it. Terminal tab titles follow the Claude Code session name (for example `◑ 插件迭代2.0`), so as a last resort the app now recognizes the window by its tab title and focuses it without injecting any command into the terminal.
+  - Windows claimed this way are recorded in `~/.claude-dispatch/windows.json` with a `manual` flag and re-validated by tab title on every click; when the title no longer matches (session renamed or window closed), the registration is dropped and the title scan runs again before any new window is opened.
+
 ## 1.1.4 — 2026-10-25
 
 ### Fixed

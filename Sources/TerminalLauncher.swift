@@ -35,7 +35,8 @@ enum TerminalLauncher {
                     claudeArgs: ["--resume", sessionId],
                     title: name,
                     cwd: cwd,
-                    marker: marker
+                    marker: marker,
+                    name: name
                 )
             }
             return
@@ -53,7 +54,8 @@ enum TerminalLauncher {
                     claudeArgs: ["attach", safeId],
                     title: name,
                     cwd: cwd,
-                    marker: marker
+                    marker: marker,
+                    name: name
                 )
             }
             return
@@ -77,7 +79,8 @@ enum TerminalLauncher {
                     claudeArgs: ["--resume", sessionId],
                     title: name,
                     cwd: cwd,
-                    marker: marker
+                    marker: marker,
+                    name: name
                 )
             }
             return
@@ -95,9 +98,10 @@ enum TerminalLauncher {
         claudeArgs: [String],
         title: String,
         cwd: String,
-        marker: String
+        marker: String,
+        name: String
     ) {
-        if focusExistingWindow(claudeArgs: claudeArgs, marker: marker, reviveCommand: command) { return }
+        if focusExistingWindow(claudeArgs: claudeArgs, marker: marker, reviveCommand: command, name: name) { return }
         guard claimOpening(marker) else {
             // 连点同一个任务：第一个窗口正在启动，第二个点击只把终端带到前台。
             debugLog("skip duplicate open for \(marker)")
@@ -250,7 +254,8 @@ enum TerminalLauncher {
                     claudeArgs: ["--resume", sessionId],
                     title: name,
                     cwd: cwd,
-                    marker: marker
+                    marker: marker,
+                    name: name
                 )
             }
         }
@@ -415,7 +420,8 @@ enum TerminalLauncher {
     private static func focusExistingWindow(
         claudeArgs: [String],
         marker: String,
-        reviveCommand: String
+        reviveCommand: String,
+        name: String
     ) -> Bool {
         let existing = findExistingWindow(claudeArgs: claudeArgs, marker: marker)
         if let tty = existing.live {
@@ -436,22 +442,48 @@ enum TerminalLauncher {
 
         // 进程表里已经没有这个任务的窗口了。旧版本创建的窗口没有 linger shell，
         // 对话退出后进程消失、窗口还在；靠登记过的 tty 把它找回来，绝不新开。
-        if let tty = registeredTTY(marker: marker) {
-            switch huskTab(tty: tty) {
-            case .husk:
-                debugLog("focused registered window for \(marker) at \(tty)")
-                recordWindow(marker: marker, tty: tty)
-                return true
-            case .busy:
-                // tty 已被别的窗口复用（里面有程序在跑），不能再认。
-                forgetWindow(marker: marker)
-            case .notFound:
-                forgetWindow(marker: marker)
-            case .failed:
-                DispatchQueue.main.async { activateTerminal() }
-                requestAutomationConsentOnce()
-                return true
+        if let entry = registeredEntry(marker: marker) {
+            if entry.manual {
+                // 手动打开的窗口（用户在终端里跑 `claude agents` 选的会话）：
+                // 里面会一直有程序在跑，tty 是否仍属于这个任务要靠标签页标题确认。
+                switch verifyManualTab(tty: entry.tty, name: name) {
+                case .match:
+                    debugLog("focused registered window for \(marker) at \(entry.tty)")
+                    return focusOrActivate(tty: entry.tty)
+                case .mismatch, .notFound:
+                    // 标题变了（改名）或窗口关了：作废登记，落到下面的标题扫描再找一遍。
+                    forgetWindow(marker: marker)
+                case .failed:
+                    DispatchQueue.main.async { activateTerminal() }
+                    requestAutomationConsentOnce()
+                    return true
+                }
+            } else {
+                switch huskTab(tty: entry.tty) {
+                case .husk:
+                    debugLog("focused registered window for \(marker) at \(entry.tty)")
+                    recordWindow(marker: marker, tty: entry.tty)
+                    return true
+                case .busy:
+                    // tty 已被别的窗口复用（里面有程序在跑），不能再认。
+                    forgetWindow(marker: marker)
+                case .notFound:
+                    forgetWindow(marker: marker)
+                case .failed:
+                    DispatchQueue.main.async { activateTerminal() }
+                    requestAutomationConsentOnce()
+                    return true
+                }
             }
+        }
+
+        // 兜底：窗口是用户手动在终端里跑 `claude agents` 打开的——进程表里
+        // 既没有 attach 子进程、也没有启动脚本，但 Terminal 标签页标题会跟随
+        // 会话名（如「◑ 插件迭代2.0」）。按标题认窗，只聚焦，绝不往里注入命令。
+        if let tty = tabTitledLike(name) {
+            debugLog("existing window for \(marker) by tab title at \(tty)")
+            recordWindow(marker: marker, tty: tty, manual: true)
+            return focusOrActivate(tty: tty)
         }
         return false
     }
@@ -460,6 +492,8 @@ enum TerminalLauncher {
 
     /// 任务标记 → 窗口 tty 的持久登记。新版本生成的窗口有 linger shell，
     /// 靠进程表就能找到；旧版本窗口在对话退出后只剩一个空壳，只能按 tty 找。
+    /// `manual` 标记的是「用户手动在终端里打开的窗口」：里面始终有程序在跑，
+    /// 校验时看标签页标题而不是进程是否为空（见 `verifyManualTab`）。
     private static var registry: [String: [String: Any]] = [:]
     private static var registryLoaded = false
     private static var registryURL: URL {
@@ -477,19 +511,20 @@ enum TerminalLauncher {
         registry = object.filter { ($0.value["at"] as? Double ?? 0) >= cutoff }
     }
 
-    private static func recordWindow(marker: String, tty: String) {
+    private static func recordWindow(marker: String, tty: String, manual: Bool = false) {
         stateLock.lock()
         loadRegistryIfNeeded()
-        registry[marker] = ["tty": tty, "at": Date().timeIntervalSince1970]
+        registry[marker] = ["tty": tty, "at": Date().timeIntervalSince1970, "manual": manual]
         persistRegistry()
         stateLock.unlock()
     }
 
-    private static func registeredTTY(marker: String) -> String? {
+    private static func registeredEntry(marker: String) -> (tty: String, manual: Bool)? {
         stateLock.lock()
         loadRegistryIfNeeded()
         defer { stateLock.unlock() }
-        return registry[marker]?["tty"] as? String
+        guard let entry = registry[marker], let tty = entry["tty"] as? String else { return nil }
+        return (tty, entry["manual"] as? Bool ?? false)
     }
 
     private static func forgetWindow(marker: String) {
@@ -507,6 +542,103 @@ enum TerminalLauncher {
         }
         try? FileManager.default.createDirectory(at: AppConfig.stateDir, withIntermediateDirectories: true)
         try? data.write(to: registryURL, options: .atomic)
+    }
+
+    // MARK: - 手动打开的窗口（按标签页标题认领）
+
+    private enum ManualTabResult {
+        /// 标签页还在，标题仍然对得上这个任务。
+        case match
+        /// 标签页在，但标题已经是别的会话（改名了）或为空。
+        case mismatch
+        case notFound
+        case failed
+    }
+
+    /// 校验登记过的手动窗口是否仍属于这个任务。这类窗口里始终有程序在跑
+    /// （`claude agents` 浏览器），不能用「有没有进程」判断，只能看标题：
+    /// Claude Code 会把终端标题设成「状态符 + 会话名」，并随改名更新。
+    private static func verifyManualTab(tty: String, name: String) -> ManualTabResult {
+        let script = """
+        with timeout of 3 seconds
+            tell application "Terminal"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if tty of t is \(appleScriptLiteral(tty)) then
+                            set tabTitle to ""
+                            try
+                                set tabTitle to custom title of t
+                            end try
+                            return tabTitle
+                        end if
+                    end repeat
+                end repeat
+            end tell
+            return "__cd_missing__"
+        end timeout
+        """
+        let (status, output) = runAppleScript(script, description: "verify manual tab")
+        guard status == 0 else { return .failed }
+        if output == "__cd_missing__" { return .notFound }
+        return tabTitle(output, matches: name) ? .match : .mismatch
+    }
+
+    /// 扫描所有 Terminal 标签页，找出标题与任务名一致的那个窗口的 tty。
+    /// 找不到返回 nil。一次 AppleScript 调用取回全部「tty + 标题」，在 Swift 侧比较。
+    /// 注意：分隔符不能用 `tab` 常量——在 Terminal 的 tell 块里它会被解析成
+    /// Terminal 的 tab 类，拼进字符串变成字面量 "tab"（实测）。
+    private static func tabTitledLike(_ name: String) -> String? {
+        let script = """
+        set sep to ASCII character 9
+        with timeout of 3 seconds
+            tell application "Terminal"
+                set out to ""
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        set tabTitle to ""
+                        try
+                            set tabTitle to custom title of t
+                        end try
+                        set out to out & (tty of t) & sep & tabTitle & linefeed
+                    end repeat
+                end repeat
+                return out
+            end tell
+        end timeout
+        """
+        let (status, output) = runAppleScript(script, description: "scan tab titles")
+        guard status == 0 else {
+            debugLog("scan tab titles failed: exit=\(status) output=\(output)")
+            return nil
+        }
+        for line in output.split(separator: "\n") {
+            let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, tabTitle(String(parts[1]), matches: name) else { continue }
+            return String(parts[0])
+        }
+        return nil
+    }
+
+    /// 标签页标题与任务名的匹配。标题形如「◑ 插件迭代2.0」——状态旋转符 +
+    /// 空格 + 会话名；剥掉符号前缀后按全等比较，并容忍一端是另一端的截断
+    /// （数据源的名字可能带「…」，至少 4 个字符才允许前缀匹配）。
+    private static func tabTitle(_ title: String, matches name: String) -> Bool {
+        var trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let firstSpace = trimmed.firstIndex(of: " ") {
+            let prefix = trimmed[trimmed.startIndex..<firstSpace]
+            if !prefix.isEmpty, prefix.rangeOfCharacter(from: CharacterSet.alphanumerics) == nil {
+                trimmed = String(trimmed[trimmed.index(after: firstSpace)...])
+                    .trimmingCharacters(in: .whitespaces)
+            }
+        }
+        let target = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !target.isEmpty else { return false }
+        if trimmed.caseInsensitiveCompare(target) == .orderedSame { return true }
+        for pair in [(trimmed, target), (target, trimmed)] where pair.1.hasSuffix("…") {
+            let stem = String(pair.1.dropLast())
+            if stem.count >= 4, pair.0.hasPrefix(stem) { return true }
+        }
+        return false
     }
 
     /// 聚焦成功返回 true；标签页不在 Terminal 或聚焦失败时也返回 true
