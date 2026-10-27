@@ -105,7 +105,7 @@ The first launch installs the Claude Code hooks and checks their health. When it
 
 ### Download (recommended)
 
-1. Download `ClaudeDispatch-1.1.0.zip` from [Releases](https://github.com/ink110/claude-dispatch/releases/latest).
+1. Download the latest `ClaudeDispatch-<version>.zip` (for example `ClaudeDispatch-1.1.6.zip`) from [Releases](https://github.com/ink110/claude-dispatch/releases/latest).
 2. Unzip and drag `ClaudeDispatch.app` into Applications.
 3. **Right-click → Open the first time.** The app is not notarized by Apple, so a double-click is blocked by Gatekeeper.
 
@@ -120,7 +120,7 @@ The first launch installs the Claude Code hooks and checks their health. When it
 Verify the download with the SHA-256 file published alongside the release:
 
 ```bash
-shasum -a 256 -c ClaudeDispatch-1.1.0.zip.sha256
+shasum -a 256 -c ClaudeDispatch-1.1.6.zip.sha256
 ```
 
 ### Build from source

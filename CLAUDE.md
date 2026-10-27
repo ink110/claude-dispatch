@@ -83,6 +83,19 @@ claude-dispatch/
 
 `onFailure: "block"` 需要 Claude Code ≥ 2.1.295；当前本机版本按「hook 失败 = 非阻塞回落」设计：交互式会话回终端原生提示，`-p` 任务视为拒绝，agent view 后台任务进入 blocked 等待。不要假设 App 挂掉时 hook 会 block。
 
+## 发布流程
+
+版本号唯一来源是 `Resources/Info.plist`（`CFBundleShortVersionString` + `CFBundleVersion`，build 递增）。发布一个版本的步骤：
+
+1. 改代码 + 更新 `CHANGELOG.md`（版本小节，含用户视角的修复/变更说明），commit。
+2. 升 `Info.plist` 版本号，更新两个 README 的下载示例版本号，commit。
+3. `git tag -a vX.Y.Z <commit> -m vX.Y.Z` 打在版本最终提交上，`git push origin main` + `git push origin vX.Y.Z`。
+4. `git worktree add wt vX.Y.Z && (cd wt && ./scripts/package.sh X.Y.Z)` 构建该标签的 zip + SHA-256（必须在标签上构建，保证二进制与源码一致）。
+5. `gh release create vX.Y.Z dist 产物 --title vX.Y.Z --notes <CHANGELOG 该节>`，附上 `.zip` 和 `.zip.sha256` 两个资产。
+6. 发布后跑发布前扫描并验证 Release 页面资产齐全。
+
+网络绕行（本机 github.com DNS 被污染）：api.github.com 直连可用；github.com / upload.github.com 需经 127.0.0.1 的 CONNECT 代理定向到可用边缘 IP（脚本见 ~/gh-proxy 惯例，可用 IP 用 `curl --resolve` 逐个试 140.82.112.3 / 113.3 / 114.3 / *.13）。git 用 `-c http.proxy=`，gh 用 `HTTPS_PROXY` 环境变量。
+
 ## 命名与代码风格
 
 - 文件名、类型名、变量名用英文；UI 文案用中文；代码注释可中文。

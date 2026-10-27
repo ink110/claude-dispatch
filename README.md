@@ -105,7 +105,7 @@ Claude Dispatch 用一条常驻状态条 + 一块状态面板 + 三类确认浮�
 
 ### 下载安装（推荐）
 
-1. 到 [Releases](https://github.com/ink110/claude-dispatch/releases/latest) 下载 `ClaudeDispatch-1.1.0.zip`。
+1. 到 [Releases](https://github.com/ink110/claude-dispatch/releases/latest) 下载最新的 `ClaudeDispatch-<版本号>.zip`（例如 `ClaudeDispatch-1.1.6.zip`）。
 2. 解压，把 `ClaudeDispatch.app` 拖进「应用程序」。
 3. **首次打开必须右键 →「打开」**。应用没有 Apple 开发者签名，双击会被 Gatekeeper 拦下。
 
@@ -120,7 +120,7 @@ Claude Dispatch 用一条常驻状态条 + 一块状态面板 + 三类确认浮�
 也可以校验下载包的 SHA-256（Release 页面会同时提供 `.sha256`）：
 
 ```bash
-shasum -a 256 -c ClaudeDispatch-1.1.0.zip.sha256
+shasum -a 256 -c ClaudeDispatch-1.1.6.zip.sha256
 ```
 
 ### 从源码构建
