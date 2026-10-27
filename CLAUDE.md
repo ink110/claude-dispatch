@@ -2,7 +2,7 @@
 
 macOS 菜单栏 + 悬浮确认面板，用于观测多个 Claude Code CLI 会话，并在任务需要确认时主动提醒、直接在浮层里批复或补充信息。
 
-公开版本：v1.1.5，MIT 许可证，仓库名 `claude-dispatch`；分发形态为通用二进制 `.app` + zip（ad-hoc 签名，不公证）。
+公开版本：v1.1.6，MIT 许可证，仓库名 `claude-dispatch`；分发形态为通用二进制 `.app` + zip（ad-hoc 签名，不公证）。
 
 ## 核心约定
 
@@ -21,6 +21,9 @@ macOS 菜单栏 + 悬浮确认面板，用于观测多个 Claude Code CLI 会话
 - **手动 `claude agents` 窗口按标题认领**：用户手动在终端跑 `claude agents` 选中会话的窗口没有 attach 子进程、没有启动脚本，进程表和登记都找不到；但 Terminal 标签页标题跟随会话名（「◑ 插件迭代2.0」）。兜底按标题认领：剥掉状态符前缀后全等比较，容忍带「…」的截断名（前缀 ≥4 字符），命中只聚焦、绝不注入命令，登记带 `manual: true`。之后每次点击按标题复核，标题不符（改名/关窗）就作废登记、重新扫描。AppleScript 里不能用 `tab` 常量拼字符串——在 Terminal 的 tell 块里它被解析成 Terminal 的 tab 类、拼出来是字面量 "tab"；用 `ASCII character 9`。
 - **不把空闲会话池当任务**：`~/.claude/sessions/<pid>.json` 里 `spare: true` 的是后台守护进程预热的空会话，没有对话，attach 只会得到空白 agent 视图，必须在 SessionStore 读取时过滤掉。
 - **可点击行的 hitTest 必须裁剪到自己内部**：无条件返回 `self` 会让 `NSStackView` 里最后一行吃掉整块内容区的点击（父视图把同一个点依次交给每个子视图试探，不做 frame 裁剪）。嵌在 flipped document view 里时父链传来的点可能在 frame 空间也可能在 bounds 空间，两种都要认。用 `CLAUDE_DISPATCH_HIT_TEST=1` + `CLAUDE_DISPATCH_SHOW_FLOATING_STATUS=1` 自测每行中心点是否命中自己。
+- **flipped 容器会改变子视图 draw() 的坐标系**：`isFlipped=true` 的祖先（如滚动文档视图）会让所有后代视图的 `draw()` 在 y 轴向下的坐标系里执行（不限于自身）。`NSString.draw` 会自动适应，但 `NSBezierPath` 手写的路径会上下镜像——多选勾曾因此画反。自绘图形要用 `NSGraphicsContext.current?.isFlipped` 换算「视觉下/上方」的 y 值。
+- **运行中的旋转指示器是自绘 CAShapeLayer 圆弧**（`StatusIconView`）：`arrow.triangle.2.circlepath` 的字形中心随 pointSize 取整偏移（16pt 偏心 ~1px，旋转时包围盒中心漂移 2px；13/18pt 恰好抵消），Apple 为旋转设计的 `progress.activity` 在 AppKit 的 NSImageView 里渲染空白（macOS 26 实测）。自绘圆弧的圆心由构造放在图层中心，anchorPoint 默认 (0.5, 0.5) 即旋转中心，零漂移。
+- **旋转稳定性的测量方法**：`screencapture -t bmp` 连拍 ≥6 帧（间隔 0.2~0.3s 覆盖多个相位），解析蓝色像素，用**包围盒中心**对比（圆弧跨度 >180° 时包围盒中心=圆心）。不要用质心：缺口的质心会随旋转绕圈，是正常现象。1× 截图下 ≤0.5px 是光栅化量化的理论下限。
 
 ## 目录结构
 
@@ -123,6 +126,8 @@ claude-dispatch/
 - 倒地复活：先 `--open-attach <短 id>` 开窗口，再 `kill` 掉它的 `claude attach` 进程（模拟 detach，窗口里的 `zsh -i` 应继续存活），然后再次 `--open-attach <短 id>`，日志应为 `idle window … reviving` + `revived tty`，同一 tty 上重新出现 `claude attach`，启动脚本数量不变。
 - 旧窗口登记：手动开一个不带 linger 的 `task-attach-<id>-*.command` 并 `--open-attach <id>` 一次（应把 tty 写入 `windows.json`），杀掉脚本进程让窗口变成空壳，再次 `--open-attach <id>` 应输出 `focused registered window`，不产生新脚本；关掉窗口后再执行，应删掉登记并新开窗口。
 - 手动窗口认领：`--open-attach <短 id> --name <会话名>`（加 `--debug` 看日志）。已存在同名标签页时应输出 `existing window for attach-<id> by tab title at /dev/ttysNNN` 且不产生新脚本；再点一次应输出 `focused registered window`（登记复核）；把登记的 tty 改成不存在的值后执行，应重新按标题找回同一窗口；名字匹配不到任何标签页时仍应正常新开窗口。
+- 选项行勾选：`build/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch --show-option-demo`，截图确认选中行的勾是正常 ✓ 方向（镜像勾 = flipped 坐标系坑回归）。
+- 旋转中心：按「旋转稳定性的测量方法」连拍对比（`--show-option-demo` 同款思路：把 `StatusIconView(.running)` 放普通和 flipped 容器各一组）；所有尺寸包围盒中心漂移应 ≤0.5px。
 - 空闲池过滤：`grep -l '"spare":true' ~/.claude/sessions/*.json` 有结果时，状态面板不应出现名字是短 id（如 `446134c2`）的行。
 - 点击命中：`CLAUDE_DISPATCH_HIT_TEST=1 CLAUDE_DISPATCH_SHOW_FLOATING_STATUS=1 build/ClaudeDispatch.app/Contents/MacOS/ClaudeDispatch`，每一行应报告「自己 -> 自己」；配合 `CLAUDE_DISPATCH_DEMO_AGENTS=<agents.json>` 用固定数据时不依赖本机会话。
 - 调试日志默认关闭；`CLAUDE_DISPATCH_DEBUG=1` 开启，写入 `~/.claude-dispatch/debug.log`，超过 1MB 自动清空。

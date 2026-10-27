@@ -89,6 +89,15 @@ if flags.contains("--request-automation") {
     exit(0)
 }
 
+// 截图验收：单独展示选项行各状态（自绘勾选指示器），窗口停留 10 分钟后自动退出。
+if flags.contains("--show-option-demo") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    OptionRowDemo.show()
+    RunLoop.main.run(until: Date().addingTimeInterval(600))
+    exit(0)
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

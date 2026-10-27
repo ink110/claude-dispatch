@@ -922,10 +922,16 @@ private final class OptionRowButton: NSButton {
             NSColor.controlAccentColor.setFill()
             circle.fill()
 
+            // 选项行嵌在 flipped 滚动文档视图里，AppKit 会把 flipped 坐标系
+            // 传进子视图的 draw()（y 轴向下）。勾的路径必须按当前上下文换算
+            // 「视觉下方/上方」，否则在 flipped 坐标里画出来是上下镜像的勾。
+            let flipped = NSGraphicsContext.current?.isFlipped ?? false
+            let yLow = flipped ? circleRect.maxY - 3.4 : circleRect.minY + 3.4
+            let yHigh = flipped ? circleRect.minY + 3.8 : circleRect.maxY - 3.8
             let check = NSBezierPath()
             check.move(to: NSPoint(x: circleRect.minX + 3.4, y: circleRect.midY))
-            check.line(to: NSPoint(x: circleRect.midX - 0.6, y: circleRect.minY + 3.4))
-            check.line(to: NSPoint(x: circleRect.maxX - 3.2, y: circleRect.maxY - 3.8))
+            check.line(to: NSPoint(x: circleRect.midX - 0.6, y: yLow))
+            check.line(to: NSPoint(x: circleRect.maxX - 3.2, y: yHigh))
             check.lineWidth = 1.8
             check.lineCapStyle = .round
             check.lineJoinStyle = .round
@@ -977,4 +983,57 @@ private final class OptionRowButton: NSButton {
 /// 滚动文档视图：从顶部开始排布，内容不足一屏时不会被垂直居中。
 private final class FlippedDocumentView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// 截图/验收用：单独展示选项行各状态（多选勾选、单选圆点）。
+/// 必须嵌在 flipped 文档视图里，和生产环境坐标系一致，否则复现不出真实绘制方向。
+enum OptionRowDemo {
+    static func show() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 120, width: 460, height: 220),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "OptionRowDemo"
+
+        let rows: [(String, Bool, Bool)] = [
+            ("多选 · 已选中", true, true),
+            ("多选 · 未选中", true, false),
+            ("单选 · 已选中", false, true),
+            ("单选 · 未选中", false, false),
+        ]
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for (title, multiSelect, chosen) in rows {
+            let row = OptionRowButton(
+                title: title,
+                tag: 0,
+                multiSelect: multiSelect,
+                target: nil,
+                action: nil
+            )
+            row.setChosen(chosen)
+            stack.addArrangedSubview(row)
+        }
+        stack.widthAnchor.constraint(equalToConstant: 404).isActive = true
+
+        let document = FlippedDocumentView()
+        document.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 12),
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 12),
+            document.widthAnchor.constraint(equalToConstant: 428),
+        ])
+        let scroll = NSScrollView(frame: window.contentView!.bounds)
+        scroll.autoresizingMask = [.width, .height]
+        scroll.documentView = document
+        scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = false
+        window.contentView!.addSubview(scroll)
+        window.orderFrontRegardless()
+    }
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.6 — 2026-10-27
+
+### Fixed
+
+- The multi-select checkmark in question cards drew mirrored. Option rows draw inside the flipped scroll document view, and AppKit propagates the flipped coordinate system into subviews' `draw()` (y points down); the check path was written assuming y-up. The path now converts its low/high points for the current context's flipped state.
+- The running-state spinner no longer drifts while rotating. The SF Symbol `arrow.triangle.2.circlepath` rasterizes with its glyph center off the image's geometric center at some point sizes (screenshot measurement: bounding-box center drifted 2px across rotation phases at 16pt), so the arrows orbited an off-center point. The spinner is now a custom `CAShapeLayer` arc whose circle is centered in the layer by construction (same measurement: ≤0.5px, the 1× rasterization floor, at all sizes in both plain and flipped containers). Apple's designated spinner symbol `progress.activity` renders blank in an AppKit `NSImageView` on macOS 26, so it cannot be used directly.
+
 ## 1.1.5 — 2026-10-26
 
 ### Fixed
